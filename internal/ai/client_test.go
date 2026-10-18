@@ -4,17 +4,25 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/404kernel/kernel/internal/config"
 )
 
 func TestNewClientDemoFallback(t *testing.T) {
-	client := NewClient(ProviderGemini, "")
+	cfg := &config.Config{
+		Provider: "gemini",
+	}
+	client := NewClientFromConfig(cfg)
 	if client.Provider != ProviderDemo && client.APIKey == "" {
 		t.Errorf("expected demo provider fallback when api key is missing")
 	}
 }
 
 func TestStreamDemo(t *testing.T) {
-	client := NewClient(ProviderDemo, "")
+	cfg := &config.Config{
+		Provider: "demo",
+	}
+	client := NewClientFromConfig(cfg)
 	ch := make(chan StreamChunk, 20)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()

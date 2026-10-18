@@ -7,9 +7,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"time"
+
+	"github.com/404kernel/kernel/internal/config"
 )
 
 type Provider string
@@ -30,21 +31,24 @@ type Client struct {
 	HTTP     *http.Client
 }
 
-func NewClient(provider Provider, model string) *Client {
+func NewClientFromConfig(cfg *config.Config) *Client {
+	provider := Provider(cfg.Provider)
 	var key string
+	model := cfg.Model
+
 	switch provider {
 	case ProviderGemini:
-		key = os.Getenv("GEMINI_API_KEY")
+		key = cfg.GeminiAPIKey
 		if model == "" {
 			model = "gemini-2.5-flash"
 		}
 	case ProviderClaude:
-		key = os.Getenv("ANTHROPIC_API_KEY")
+		key = cfg.AnthropicKey
 		if model == "" {
 			model = "claude-3-5-sonnet-latest"
 		}
 	case ProviderOpenAI:
-		key = os.Getenv("OPENAI_API_KEY")
+		key = cfg.OpenAIAPIKey
 		if model == "" {
 			model = "gpt-4o"
 		}
@@ -85,6 +89,8 @@ func (c *Client) Stream(ctx context.Context, prompt string, ch chan<- StreamChun
 	switch c.Provider {
 	case ProviderGemini:
 		c.streamGemini(ctx, prompt, ch)
+	case ProviderClaude:
+		c.streamClaude(ctx, prompt, ch)
 	case ProviderOpenAI, ProviderOllama:
 		c.streamOpenAI(ctx, prompt, ch)
 	default:
@@ -94,18 +100,12 @@ func (c *Client) Stream(ctx context.Context, prompt string, ch chan<- StreamChun
 
 func (c *Client) streamDemo(ctx context.Context, prompt string, ch chan<- StreamChunk) {
 	demoResponse := []string{
-		"[KERNEL // SYSTEM]: Analyzing repository workspace...\n",
-		"Identified target: Multi-file project structure.\n",
-		"Executing runtime inspection...\n\n",
-		"```go\n",
-		"func OptimizeThroughput(ctx context.Context) error {\n",
-		"    // Kernel parallel worker pipeline\n",
-		"    workers := runtime.NumCPU() * 2\n",
-		"    ch := make(chan Task, workers)\n",
-		"    return scheduler.Dispatch(ctx, ch)\n",
-		"}\n",
+		"[KERNEL // DEMO MODE]: No active API key found.\n",
+		"Run with your API key or configure it in the Setup Wizard:\n\n",
+		"```bash\n",
+		"export GEMINI_API_KEY=\"your-key\"\n",
 		"```\n\n",
-		"System status: Nominal. All subsystems operating at peak CPM.\n",
+		"Sparky is ready to connect once you provide a key!\n",
 	}
 
 	for _, token := range demoResponse {
@@ -113,7 +113,7 @@ func (c *Client) streamDemo(ctx context.Context, prompt string, ch chan<- Stream
 		case <-ctx.Done():
 			ch <- StreamChunk{Error: ctx.Err(), Done: true}
 			return
-		case <-time.After(60 * time.Millisecond):
+		case <-time.After(50 * time.Millisecond):
 			ch <- StreamChunk{Text: token}
 		}
 	}
@@ -188,6 +188,71 @@ func (c *Client) streamGemini(ctx context.Context, prompt string, ch chan<- Stre
 			if err != io.EOF {
 				ch <- StreamChunk{Error: err}
 			}
+			break
+		}
+	}
+	ch <- StreamChunk{Done: true}
+}
+
+func (c *Client) streamClaude(ctx context.Context, prompt string, ch chan<- StreamChunk) {
+	url := "https://api.anthropic.com/v1/messages"
+
+	payload := map[string]interface{}{
+		"model":      c.Model,
+		"max_tokens": 4096,
+		"messages": []map[string]string{
+			{"role": "user", "content": prompt},
+		},
+		"stream": true,
+	}
+
+	body, _ := json.Marshal(payload)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	if err != nil {
+		ch <- StreamChunk{Error: err, Done: true}
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", c.APIKey)
+	req.Header.Set("anthropic-version", "2023-06-01")
+
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		ch <- StreamChunk{Error: err, Done: true}
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		ch <- StreamChunk{Error: fmt.Errorf("claude api error (%d): %s", resp.StatusCode, string(respBody)), Done: true}
+		return
+	}
+
+	buf := make([]byte, 2048)
+	for {
+		n, err := resp.Body.Read(buf)
+		if n > 0 {
+			raw := string(buf[:n])
+			lines := strings.Split(raw, "\n")
+			for _, line := range lines {
+				if strings.HasPrefix(line, "data: ") {
+					jsonStr := strings.TrimPrefix(line, "data: ")
+					var chunk struct {
+						Type  string `json:"type"`
+						Delta struct {
+							Text string `json:"text"`
+						} `json:"delta"`
+					}
+					if err := json.Unmarshal([]byte(jsonStr), &chunk); err == nil {
+						if chunk.Delta.Text != "" {
+							ch <- StreamChunk{Text: chunk.Delta.Text}
+						}
+					}
+				}
+			}
+		}
+		if err != nil {
 			break
 		}
 	}

@@ -8,12 +8,21 @@ import (
 	"time"
 
 	"github.com/404kernel/kernel/internal/ai"
+	"github.com/404kernel/kernel/internal/config"
 	"github.com/404kernel/kernel/internal/pet"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+)
+
+type AppMode int
+
+const (
+	ModeChat AppMode = iota
+	ModeWizardSelectProvider
+	ModeWizardEnterKey
 )
 
 type chatMessage struct {
@@ -23,6 +32,7 @@ type chatMessage struct {
 }
 
 type Model struct {
+	cfg        *config.Config
 	aiClient   *ai.Client
 	pet        *pet.Pet
 	textInput  textinput.Model
@@ -32,9 +42,11 @@ type Model struct {
 	streamChan chan ai.StreamChunk
 	cancelFunc context.CancelFunc
 
-	Messages    []chatMessage
-	Cwd         string
-	CurrentResp strings.Builder
+	Mode           AppMode
+	WizardProvider string
+	Messages       []chatMessage
+	Cwd            string
+	CurrentResp    strings.Builder
 
 	width  int
 	height int
@@ -50,9 +62,8 @@ func petTicker() tea.Cmd {
 	})
 }
 
-func NewModel(client *ai.Client) Model {
+func NewModel(cfg *config.Config) Model {
 	ti := textinput.New()
-	ti.Placeholder = "Ask kernel to explain code, generate commands, or solve problems..."
 	ti.Focus()
 	ti.CharLimit = 1024
 	ti.Width = 60
@@ -62,15 +73,26 @@ func NewModel(client *ai.Client) Model {
 	s.Style = lipgloss.NewStyle().Foreground(SecondaryColor)
 
 	p := pet.NewPet("Sparky")
-
 	cwd, _ := os.Getwd()
 
+	initialMode := ModeChat
+	if !cfg.HasValidKey() && cfg.Provider != "demo" {
+		initialMode = ModeWizardSelectProvider
+		ti.Placeholder = "Type 1, 2, 3, 4, or 5..."
+	} else {
+		ti.Placeholder = "Ask kernel to explain code, generate commands, or solve problems..."
+	}
+
+	client := ai.NewClientFromConfig(cfg)
+
 	m := Model{
+		cfg:       cfg,
 		aiClient:  client,
 		pet:       p,
 		textInput: ti,
 		spinner:   s,
 		Cwd:       cwd,
+		Mode:      initialMode,
 		Messages: []chatMessage{
 			{
 				Role:    "SYSTEM",
@@ -120,6 +142,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Quit
 		case tea.KeyEnter:
+			if m.Mode == ModeWizardSelectProvider {
+				return m.handleWizardSelect()
+			} else if m.Mode == ModeWizardEnterKey {
+				return m.handleWizardEnterKey()
+			}
+
+			// Normal Chat Mode
 			if m.streaming {
 				return m, nil
 			}
@@ -214,6 +243,86 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(tiCmd, vpCmd, spCmd)
 }
 
+func (m *Model) handleWizardSelect() (tea.Model, tea.Cmd) {
+	val := strings.TrimSpace(m.textInput.Value())
+	m.textInput.Reset()
+
+	switch val {
+	case "1":
+		m.WizardProvider = "gemini"
+		m.Mode = ModeWizardEnterKey
+		m.textInput.Placeholder = "Paste your Google Gemini API Key..."
+	case "2":
+		m.WizardProvider = "claude"
+		m.Mode = ModeWizardEnterKey
+		m.textInput.Placeholder = "Paste your Anthropic Claude API Key..."
+	case "3":
+		m.WizardProvider = "openai"
+		m.Mode = ModeWizardEnterKey
+		m.textInput.Placeholder = "Paste your OpenAI API Key..."
+	case "4":
+		m.cfg.Provider = "ollama"
+		m.cfg.Model = "llama3"
+		_ = config.SaveConfig(m.cfg)
+		m.aiClient = ai.NewClientFromConfig(m.cfg)
+		m.Mode = ModeChat
+		m.textInput.Placeholder = "Ask kernel to explain code, generate commands, or solve problems..."
+		m.Messages = append(m.Messages, chatMessage{
+			Role:    "SYSTEM",
+			Content: "Ollama configured (http://localhost:11434). Ready!",
+			Time:    time.Now().Format("15:04"),
+		})
+		m.updateViewport()
+	default:
+		m.cfg.Provider = "demo"
+		m.aiClient = ai.NewClientFromConfig(m.cfg)
+		m.Mode = ModeChat
+		m.textInput.Placeholder = "Ask kernel to explain code, generate commands, or solve problems..."
+		m.Messages = append(m.Messages, chatMessage{
+			Role:    "SYSTEM",
+			Content: "Running in Interactive Demo Mode.",
+			Time:    time.Now().Format("15:04"),
+		})
+		m.updateViewport()
+	}
+
+	return m, nil
+}
+
+func (m *Model) handleWizardEnterKey() (tea.Model, tea.Cmd) {
+	key := strings.TrimSpace(m.textInput.Value())
+	m.textInput.Reset()
+
+	if key != "" {
+		m.cfg.Provider = m.WizardProvider
+		switch m.WizardProvider {
+		case "gemini":
+			m.cfg.GeminiAPIKey = key
+			m.cfg.Model = "gemini-2.5-flash"
+		case "claude":
+			m.cfg.AnthropicKey = key
+			m.cfg.Model = "claude-3-5-sonnet-latest"
+		case "openai":
+			m.cfg.OpenAIAPIKey = key
+			m.cfg.Model = "gpt-4o"
+		}
+		_ = config.SaveConfig(m.cfg)
+		m.aiClient = ai.NewClientFromConfig(m.cfg)
+	}
+
+	m.Mode = ModeChat
+	m.pet.SetState(pet.StateHappy)
+	m.textInput.Placeholder = "Ask kernel to explain code, generate commands, or solve problems..."
+	m.Messages = append(m.Messages, chatMessage{
+		Role:    "SYSTEM",
+		Content: fmt.Sprintf("Setup complete! Connected to [%s]. Configuration saved to ~/.kernel/config.json", m.cfg.Provider),
+		Time:    time.Now().Format("15:04"),
+	})
+	m.updateViewport()
+
+	return m, nil
+}
+
 func (m *Model) updateViewport() {
 	var b strings.Builder
 
@@ -265,7 +374,7 @@ func (m Model) View() string {
 	headerBar := lipgloss.JoinHorizontal(lipgloss.Center, title, "  ", providerBadge, "  ", cwdBadge)
 	s.WriteString(HeaderBox.Render(headerBar) + "\n\n")
 
-	// Pet Companion Card (Header widget)
+	// Pet Companion Card
 	petBox := lipgloss.NewStyle().
 		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(PrimaryColor).
@@ -280,8 +389,38 @@ func (m Model) View() string {
 		)
 	s.WriteString(petBox + "\n\n")
 
-	// Viewport (Chat conversation)
-	s.WriteString(m.viewport.View() + "\n\n")
+	// If in Setup Wizard mode, display guided menu
+	if m.Mode == ModeWizardSelectProvider {
+		wizardMenu := lipgloss.NewStyle().
+			BorderStyle(lipgloss.RoundedBorder()).
+			BorderForeground(WarningColor).
+			Padding(1, 2).
+			Render(
+				TitleStyle.Render("SETUP WIZARD // CHOOSE AI PROVIDER") + "\n\n" +
+					"No active API key detected. Select a provider:\n\n" +
+					" [1] Google Gemini  (Free Tier API Key - Recommended)\n" +
+					" [2] Anthropic Claude (Sonnet 3.5 / Haiku)\n" +
+					" [3] OpenAI (GPT-4o)\n" +
+					" [4] Local Ollama (Free, runs offline on localhost:11434)\n" +
+					" [5] Try Demo Mode (Explore interface without a key)\n\n" +
+					SubtitleStyle.Render("Type 1-5 and press Enter:"),
+			)
+		s.WriteString(wizardMenu + "\n\n")
+	} else if m.Mode == ModeWizardEnterKey {
+		keyMenu := lipgloss.NewStyle().
+			BorderStyle(lipgloss.RoundedBorder()).
+			BorderForeground(SecondaryColor).
+			Padding(1, 2).
+			Render(
+				TitleStyle.Render(fmt.Sprintf("ENTER %s API KEY", strings.ToUpper(m.WizardProvider))) + "\n\n" +
+					fmt.Sprintf("Key will be securely saved to ~/.kernel/config.json.\n") +
+					SubtitleStyle.Render("Paste your key below and press Enter (or press Enter to skip):"),
+			)
+		s.WriteString(keyMenu + "\n\n")
+	} else {
+		// Viewport (Chat conversation)
+		s.WriteString(m.viewport.View() + "\n\n")
+	}
 
 	// Bottom Input Field
 	var inputBorder = InputBoxActive
@@ -292,7 +431,7 @@ func (m Model) View() string {
 
 	// Footer Keybind Hints
 	s.WriteString(FooterStyle.Render(
-		fmt.Sprintf("%s send · %s cancel/exit · %s quit", FooterKey.Render("Enter"), FooterKey.Render("Esc"), FooterKey.Render("q")),
+		fmt.Sprintf("%s submit · %s cancel/exit · %s quit", FooterKey.Render("Enter"), FooterKey.Render("Esc"), FooterKey.Render("q")),
 	))
 
 	return s.String()

@@ -1,6 +1,6 @@
 # KERNEL ⚡
 
-> **High-performance, keyboard-driven autonomous terminal AI agent built with Go and Bubble Tea.**
+> **High-performance, keyboard-driven terminal AI agent built with Go and Bubble Tea.**
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/404kernel/kernel)](https://goreportcard.com/report/github.com/404kernel/kernel)
 [![CI & Release](https://github.com/404kernel/kernel/actions/workflows/ci.yml/badge.svg)](https://github.com/404kernel/kernel/actions)
@@ -8,19 +8,28 @@
 [![Go Version](https://img.shields.io/badge/go-1.27%2B-cyan.svg)](https://golang.org)
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│  checked    161 / 161                                        │
-│  registered 0                                                │
-│  cpm        120                                              │
-│  peak cpm   161                                              │
-│                                                              │
-│  throughput ████████████████████████████████ 100.0%          │
-└──────────────────────────────────────────────────────────────┘
-┌ activity ────────────────────────────────────────────────────┐
-│ [15:04:05] [SYS] Kernel runtime initialized v1.0.0           │
-│ [15:04:05] [NET] AI provider configured: [gemini]            │
-│ [15:04:06] [OK]  Workspace connection verified               │
-└──────────────────────────────────────────────────────────────┘
+╭────────────────────────────────────────────────────────────────────────────╮
+│ ⚡ KERNEL   [GEMINI :: gemini-2.5-flash]   cwd: /workspace/project         │
+╰────────────────────────────────────────────────────────────────────────────╯
+
+╭────────────────────────────────────────────────────────────────────────────╮
+│ [ USER ] 15:04                                                             │
+│                                                                            │
+│ Write a high-concurrency worker pool in Go with channel backpressure       │
+╰────────────────────────────────────────────────────────────────────────────╯
+
+╭────────────────────────────────────────────────────────────────────────────╮
+│ [ KERNEL ] ⠋ 15:04                                                         │
+│                                                                            │
+│ Here is a production-grade worker pool utilizing bounded buffer channels: │
+│                                                                            │
+│ func NewWorkerPool(workers, queueSize int) *Pool { ... }                   │
+╰────────────────────────────────────────────────────────────────────────────╯
+
+╭────────────────────────────────────────────────────────────────────────────╮
+│ > Ask kernel to explain code, generate commands, or solve problems...      │
+╰────────────────────────────────────────────────────────────────────────────╯
+[Enter] send · [Esc] cancel/exit · [q] quit
 ```
 
 `kernel` is a fast, standalone terminal workspace orchestrator designed for developers who live in their CLI. It features a reactive Terminal User Interface (TUI) powered by **Charmbracelet's Bubble Tea** and **Lip Gloss**, real-time token streaming, and multi-provider AI model orchestration.
@@ -30,14 +39,13 @@
 ## ✨ Features
 
 - 🏎️ **Single Compiled Binary**: Zero node_modules, zero external runtimes. Single fast `.exe` / ELF binary.
-- 🎨 **Modern Cyber TUI**: Rounded neon box models, live throughput progress bars, streaming response viewports, and timestamped activity logs.
+- 🎨 **Modern Cyber TUI**: Rounded neon box models, reactive viewport scrolling, streaming token indicators, and syntax-aware formatting.
 - 🧠 **Multi-Provider AI Engine**:
   - **Google Gemini** (`gemini-2.5-flash`, `gemini-2.5-pro`)
   - **Anthropic Claude** (`claude-3-5-sonnet`, `claude-3-5-haiku`)
   - **OpenAI** (`gpt-4o`, `o3-mini`)
   - **Local Ollama** (`llama3`, `deepseek-r1`, `qwen2.5-coder`)
   - **Built-in Interactive Demo Mode** (zero setup required to run)
-- 📊 **Real-Time Telemetry**: Live CPM (commands/prompts per minute), throughput meter, and event stream.
 - ⚡ **Cross-Platform**: Compiles natively for Linux, macOS (Apple Silicon & Intel), and Windows.
 
 ---

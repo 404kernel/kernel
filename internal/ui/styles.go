@@ -5,69 +5,85 @@ import (
 )
 
 var (
-	// Palettes
+	// Colors
 	PrimaryColor   = lipgloss.Color("#7D56F4") // Neon Purple / Violet
 	SecondaryColor = lipgloss.Color("#00D7FE") // Electric Cyan
 	AccentColor    = lipgloss.Color("#04B575") // Emerald Green
-	WarningColor   = lipgloss.Color("#FFB86C") // Amber / Orange
-	MutedColor     = lipgloss.Color("#6272A4") // Dim Gray / Muted Purple
+	WarningColor   = lipgloss.Color("#FFB86C") // Amber / Gold
+	MutedColor     = lipgloss.Color("#6272A4") // Dim Slate
 	DangerColor    = lipgloss.Color("#FF5555") // Bright Red
 	BgDark         = lipgloss.Color("#13141C")
 	BorderColor    = lipgloss.Color("#3B4252")
 
-	// Box Styles matching the modern terminal screenshot
+	// Header
 	HeaderBox = lipgloss.NewStyle().
 			BorderStyle(lipgloss.RoundedBorder()).
 			BorderForeground(PrimaryColor).
-			Padding(0, 1).
-			Bold(true).
-			Foreground(SecondaryColor)
-
-	StatBox = lipgloss.NewStyle().
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(BorderColor).
-		Padding(0, 1).
-		MarginBottom(1)
-
-	ActivityBox = lipgloss.NewStyle().
-			BorderStyle(lipgloss.RoundedBorder()).
-			BorderForeground(BorderColor).
 			Padding(0, 1)
 
 	TitleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(PrimaryColor)
+			Foreground(SecondaryColor)
+
+	ProviderBadgeStyle = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color("#FFFFFF")).
+				Background(PrimaryColor).
+				Padding(0, 1)
 
 	SubtitleStyle = lipgloss.NewStyle().
 			Foreground(MutedColor)
 
-	StatLabel = lipgloss.NewStyle().
-			Foreground(MutedColor).
-			Width(14)
-
-	StatValue = lipgloss.NewStyle().
+	// Badges
+	UserBadge = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("#FFFFFF"))
+			Foreground(lipgloss.Color("#FFFFFF")).
+			Background(SecondaryColor).
+			Padding(0, 1)
 
-	ProgressFull = lipgloss.NewStyle().
-			Foreground(SecondaryColor)
+	AgentBadge = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#FFFFFF")).
+			Background(PrimaryColor).
+			Padding(0, 1)
 
-	ProgressEmpty = lipgloss.NewStyle().
-			Foreground(BorderColor)
+	SystemBadge = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#1E1E2E")).
+			Background(WarningColor).
+			Padding(0, 1)
+
+	ErrorBadge = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#FFFFFF")).
+			Background(DangerColor).
+			Padding(0, 1)
 
 	LogTimestamp = lipgloss.NewStyle().
 			Foreground(MutedColor)
 
-	LogAgent = lipgloss.NewStyle().
-			Foreground(PrimaryColor).
-			Bold(true)
+	// Bubbles
+	MessageBubble = lipgloss.NewStyle().
+			BorderStyle(lipgloss.RoundedBorder()).
+			BorderForeground(BorderColor).
+			Padding(0, 1)
 
-	LogSuccess = lipgloss.NewStyle().
-			Foreground(AccentColor)
+	StreamingBubble = lipgloss.NewStyle().
+			BorderStyle(lipgloss.RoundedBorder()).
+			BorderForeground(SecondaryColor).
+			Padding(0, 1)
 
-	LogInfo = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#F8F8F2"))
+	InputBoxActive = lipgloss.NewStyle().
+			BorderStyle(lipgloss.RoundedBorder()).
+			BorderForeground(PrimaryColor).
+			Padding(0, 1)
 
+	InputBoxInactive = lipgloss.NewStyle().
+				BorderStyle(lipgloss.RoundedBorder()).
+				BorderForeground(BorderColor).
+				Padding(0, 1)
+
+	// Footer
 	FooterStyle = lipgloss.NewStyle().
 			Foreground(MutedColor).
 			MarginTop(1)

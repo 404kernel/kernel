@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -14,61 +15,56 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-type logItem struct {
-	Timestamp string
-	Level     string
-	Message   string
+type chatMessage struct {
+	Role    string
+	Content string
+	Time    string
 }
 
 type Model struct {
-	aiClient    *ai.Client
-	textInput   textinput.Model
-	viewport    viewport.Model
-	spinner     spinner.Model
-	streaming   bool
-	streamChan  chan ai.StreamChunk
-	cancelFunc  context.CancelFunc
+	aiClient   *ai.Client
+	textInput  textinput.Model
+	viewport   viewport.Model
+	spinner    spinner.Model
+	streaming  bool
+	streamChan chan ai.StreamChunk
+	cancelFunc context.CancelFunc
 
-	// Live Metrics (Matching screenshot)
-	TasksDone   int
-	TotalTasks  int
-	CPM         int
-	PeakCPM     int
-	Throughput  float64
-	Activity    []logItem
+	Messages []chatMessage
+	Cwd      string
+	CurrentResp strings.Builder
 
-	Response    strings.Builder
-	width       int
-	height      int
-	ready       bool
+	width  int
+	height int
+	ready  bool
 }
 
 type streamMsg ai.StreamChunk
-type tickMsg time.Time
 
 func NewModel(client *ai.Client) Model {
 	ti := textinput.New()
-	ti.Placeholder = "Ask kernel to plan, refactor, or run diagnostics..."
+	ti.Placeholder = "Ask kernel to explain code, generate commands, or solve problems..."
 	ti.Focus()
-	ti.CharLimit = 256
-	ti.Width = 50
+	ti.CharLimit = 1024
+	ti.Width = 60
 
 	s := spinner.New()
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(SecondaryColor)
 
+	cwd, _ := os.Getwd()
+
 	m := Model{
-		aiClient:   client,
-		textInput:  ti,
-		spinner:    s,
-		TotalTasks: 161,
-		TasksDone:  161,
-		PeakCPM:    161,
-		Throughput: 1.0,
-		Activity: []logItem{
-			{Timestamp: time.Now().Format("15:04:05"), Level: "SYS", Message: "Kernel runtime initialized v1.0.0"},
-			{Timestamp: time.Now().Format("15:04:05"), Level: "NET", Message: fmt.Sprintf("AI provider configured: [%s]", client.Provider)},
-			{Timestamp: time.Now().Format("15:04:06"), Level: "OK", Message: "Workspace connection verified"},
+		aiClient:  client,
+		textInput: ti,
+		spinner:   s,
+		Cwd:       cwd,
+		Messages: []chatMessage{
+			{
+				Role:    "SYSTEM",
+				Content: fmt.Sprintf("Kernel AI Agent initialized. Connected to [%s] using model [%s]. Type your prompt below.", client.Provider, client.Model),
+				Time:    time.Now().Format("15:04"),
+			},
 		},
 	}
 
@@ -96,7 +92,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.streaming && m.cancelFunc != nil {
 				m.cancelFunc()
 				m.streaming = false
-				m.addLog("WRN", "Stream canceled by user")
+				m.Messages = append(m.Messages, chatMessage{
+					Role:    "SYSTEM",
+					Content: "Response generation canceled by user.",
+					Time:    time.Now().Format("15:04"),
+				})
+				m.updateViewport()
 				return m, nil
 			}
 			return m, tea.Quit
@@ -113,19 +114,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			m.textInput.Reset()
-			m.Response.Reset()
+			m.CurrentResp.Reset()
 			m.streaming = true
-			m.TasksDone++
-			m.TotalTasks++
-			m.CPM = 120
-			if m.CPM > m.PeakCPM {
-				m.PeakCPM = m.CPM
-			}
-			m.addLog("REQ", input)
+
+			m.Messages = append(m.Messages, chatMessage{
+				Role:    "YOU",
+				Content: input,
+				Time:    time.Now().Format("15:04"),
+			})
+			m.updateViewport()
 
 			ctx, cancel := context.WithCancel(context.Background())
 			m.cancelFunc = cancel
-			m.streamChan = make(chan ai.StreamChunk, 20)
+			m.streamChan = make(chan ai.StreamChunk, 30)
 			go m.aiClient.Stream(ctx, input, m.streamChan)
 
 			return m, waitForStream(m.streamChan)
@@ -134,20 +135,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case streamMsg:
 		if msg.Error != nil {
 			m.streaming = false
-			m.addLog("ERR", msg.Error.Error())
+			m.Messages = append(m.Messages, chatMessage{
+				Role:    "ERROR",
+				Content: msg.Error.Error(),
+				Time:    time.Now().Format("15:04"),
+			})
+			m.updateViewport()
 			return m, nil
 		}
 		if msg.Done {
 			m.streaming = false
-			m.addLog("DONE", "Response completed")
-			m.viewport.SetContent(m.Response.String())
-			m.viewport.GotoBottom()
+			if m.CurrentResp.Len() > 0 {
+				m.Messages = append(m.Messages, chatMessage{
+					Role:    "KERNEL",
+					Content: m.CurrentResp.String(),
+					Time:    time.Now().Format("15:04"),
+				})
+				m.CurrentResp.Reset()
+			}
+			m.updateViewport()
 			return m, nil
 		}
 
-		m.Response.WriteString(msg.Text)
-		m.viewport.SetContent(m.Response.String())
-		m.viewport.GotoBottom()
+		m.CurrentResp.WriteString(msg.Text)
+		m.updateViewport()
 		return m, waitForStream(m.streamChan)
 
 	case tea.WindowSizeMsg:
@@ -158,14 +169,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if contentWidth < 40 {
 			contentWidth = 40
 		}
-		m.textInput.Width = contentWidth - 10
+		m.textInput.Width = contentWidth - 8
+
+		vpHeight := m.height - 10
+		if vpHeight < 8 {
+			vpHeight = 8
+		}
 
 		if !m.ready {
-			m.viewport = viewport.New(contentWidth, 10)
+			m.viewport = viewport.New(contentWidth, vpHeight)
 			m.ready = true
 		} else {
 			m.viewport.Width = contentWidth
+			m.viewport.Height = vpHeight
 		}
+		m.updateViewport()
 	}
 
 	m.textInput, tiCmd = m.textInput.Update(msg)
@@ -175,16 +193,35 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(tiCmd, vpCmd, spCmd)
 }
 
-func (m *Model) addLog(level, message string) {
-	item := logItem{
-		Timestamp: time.Now().Format("15:04:05"),
-		Level:     level,
-		Message:   message,
+func (m *Model) updateViewport() {
+	var b strings.Builder
+
+	for _, msg := range m.Messages {
+		var roleTag string
+		switch msg.Role {
+		case "YOU":
+			roleTag = UserBadge.Render(" USER ")
+		case "KERNEL":
+			roleTag = AgentBadge.Render(" KERNEL ")
+		case "SYSTEM":
+			roleTag = SystemBadge.Render(" SYSTEM ")
+		case "ERROR":
+			roleTag = ErrorBadge.Render(" ERROR ")
+		}
+
+		header := fmt.Sprintf("%s %s", roleTag, LogTimestamp.Render(msg.Time))
+		bubble := MessageBubble.Render(fmt.Sprintf("%s\n\n%s", header, msg.Content))
+		b.WriteString(bubble + "\n\n")
 	}
-	m.Activity = append(m.Activity, item)
-	if len(m.Activity) > 10 {
-		m.Activity = m.Activity[len(m.Activity)-10:]
+
+	if m.streaming && m.CurrentResp.Len() > 0 {
+		header := fmt.Sprintf("%s %s %s", AgentBadge.Render(" KERNEL "), m.spinner.View(), LogTimestamp.Render(time.Now().Format("15:04")))
+		bubble := StreamingBubble.Render(fmt.Sprintf("%s\n\n%s", header, m.CurrentResp.String()))
+		b.WriteString(bubble + "\n")
 	}
+
+	m.viewport.SetContent(b.String())
+	m.viewport.GotoBottom()
 }
 
 func waitForStream(ch chan ai.StreamChunk) tea.Cmd {
@@ -200,70 +237,27 @@ func waitForStream(ch chan ai.StreamChunk) tea.Cmd {
 func (m Model) View() string {
 	var s strings.Builder
 
-	// Top Title Bar
-	title := TitleStyle.Render("KERNEL // TERMINAL AGENT")
-	providerBadge := SubtitleStyle.Render(fmt.Sprintf("[%s / %s]", strings.ToUpper(string(m.aiClient.Provider)), m.aiClient.Model))
-	s.WriteString(lipgloss.JoinHorizontal(lipgloss.Center, title, "  ", providerBadge) + "\n\n")
+	// Top Header Bar
+	title := TitleStyle.Render("⚡ KERNEL")
+	providerBadge := ProviderBadgeStyle.Render(fmt.Sprintf("%s :: %s", strings.ToUpper(string(m.aiClient.Provider)), m.aiClient.Model))
+	cwdBadge := SubtitleStyle.Render(fmt.Sprintf("cwd: %s", m.Cwd))
+	headerBar := lipgloss.JoinHorizontal(lipgloss.Center, title, "  ", providerBadge, "  ", cwdBadge)
+	s.WriteString(HeaderBox.Render(headerBar) + "\n\n")
 
-	// Box 1: Metrics (Matching exact screenshot styling)
-	statContent := fmt.Sprintf(
-		"%s %s\n%s %s\n%s %s\n%s %s\n\n%s %s\n%s",
-		StatLabel.Render("checked"), StatValue.Render(fmt.Sprintf("%d / %d", m.TasksDone, m.TotalTasks)),
-		StatLabel.Render("registered"), StatValue.Render("0"),
-		StatLabel.Render("cpm"), StatValue.Render(fmt.Sprintf("%d", m.CPM)),
-		StatLabel.Render("peak cpm"), StatValue.Render(fmt.Sprintf("%d", m.PeakCPM)),
-		StatLabel.Render("throughput"), renderBar(m.Throughput, 36),
-		ProgressFull.Render("100.0%"),
-	)
-	s.WriteString(StatBox.Render(statContent) + "\n")
+	// Viewport (Chat conversation)
+	s.WriteString(m.viewport.View() + "\n\n")
 
-	// Box 2: Activity Log (Matching exact screenshot styling)
-	var logContent strings.Builder
-	logContent.WriteString(TitleStyle.Render("activity") + "\n\n")
-	for _, act := range m.Activity {
-		badge := LogAgent.Render(fmt.Sprintf("[%s]", act.Level))
-		if act.Level == "DONE" || act.Level == "OK" {
-			badge = LogSuccess.Render(fmt.Sprintf("[%s]", act.Level))
-		}
-		logContent.WriteString(fmt.Sprintf("%s %s %s\n", LogTimestamp.Render(act.Timestamp), badge, LogInfo.Render(act.Message)))
+	// Bottom Input Field
+	var inputBorder = InputBoxActive
+	if m.streaming {
+		inputBorder = InputBoxInactive
 	}
-	s.WriteString(ActivityBox.Render(logContent.String()) + "\n")
+	s.WriteString(inputBorder.Render(m.textInput.View()) + "\n")
 
-	// Box 3: Response Viewport (when streaming or has content)
-	if m.Response.Len() > 0 || m.streaming {
-		var respHeader string
-		if m.streaming {
-			respHeader = fmt.Sprintf("%s Kernel streaming thoughts...", m.spinner.View())
-		} else {
-			respHeader = "Agent Output:"
-		}
-		respBox := lipgloss.NewStyle().
-			BorderStyle(lipgloss.RoundedBorder()).
-			BorderForeground(SecondaryColor).
-			Padding(0, 1).
-			Render(fmt.Sprintf("%s\n\n%s", respHeader, m.viewport.View()))
-		s.WriteString("\n" + respBox + "\n")
-	}
-
-	// Bottom: Input prompt and keybind footer
-	s.WriteString("\n" + m.textInput.View() + "\n")
+	// Footer Keybind Hints
 	s.WriteString(FooterStyle.Render(
-		fmt.Sprintf("done · %d of %d tasks · %s to exit", m.TasksDone, m.TotalTasks, FooterKey.Render("q / Ctrl+C")),
+		fmt.Sprintf("%s send · %s cancel/exit · %s quit", FooterKey.Render("Enter"), FooterKey.Render("Esc"), FooterKey.Render("q")),
 	))
 
 	return s.String()
-}
-
-func renderBar(percent float64, width int) string {
-	if width <= 0 {
-		width = 20
-	}
-	filled := int(percent * float64(width))
-	if filled > width {
-		filled = width
-	}
-	empty := width - filled
-
-	bar := ProgressFull.Render(strings.Repeat("█", filled)) + ProgressEmpty.Render(strings.Repeat("░", empty))
-	return bar
 }

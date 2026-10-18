@@ -38,7 +38,7 @@ func GetConfigPath() (string, error) {
 func LoadConfig() (*Config, error) {
 	path, err := GetConfigPath()
 	if err != nil {
-		return &Config{Provider: "gemini", Model: "gemini-2.5-flash"}, nil
+		return &Config{Provider: "gemini", Model: "gemini-1.5-flash"}, nil
 	}
 
 	data, err := os.ReadFile(path)
@@ -46,7 +46,7 @@ func LoadConfig() (*Config, error) {
 		// Fallback to environment variables
 		cfg := &Config{
 			Provider:       "gemini",
-			Model:          "gemini-2.5-flash",
+			Model:          "gemini-1.5-flash",
 			GeminiAPIKey:   os.Getenv("GEMINI_API_KEY"),
 			AnthropicKey:   os.Getenv("ANTHROPIC_API_KEY"),
 			OpenAIAPIKey:   os.Getenv("OPENAI_API_KEY"),
@@ -57,7 +57,11 @@ func LoadConfig() (*Config, error) {
 
 	var cfg Config
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return &Config{Provider: "gemini", Model: "gemini-2.5-flash"}, nil
+		return &Config{Provider: "gemini", Model: "gemini-1.5-flash"}, nil
+	}
+
+	if cfg.Model == "gemini-2.5-flash" || cfg.Model == "" {
+		cfg.Model = "gemini-1.5-flash"
 	}
 
 	// Environment variables always override config file if set

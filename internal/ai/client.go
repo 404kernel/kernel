@@ -39,8 +39,8 @@ func NewClientFromConfig(cfg *config.Config) *Client {
 	switch provider {
 	case ProviderGemini:
 		key = cfg.GeminiAPIKey
-		if model == "" {
-			model = "gemini-2.5-flash"
+		if model == "" || model == "gemini-2.5-flash" {
+			model = "gemini-1.5-flash"
 		}
 	case ProviderClaude:
 		key = cfg.AnthropicKey

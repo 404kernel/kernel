@@ -1,6 +1,6 @@
-# KERNEL ⚡
+# KERNEL ⚡🐶
 
-> **High-performance, keyboard-driven terminal AI agent built with Go and Bubble Tea.**
+> **High-performance, keyboard-driven terminal AI agent with an animated desktop pet companion built with Go and Bubble Tea.**
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/404kernel/kernel)](https://goreportcard.com/report/github.com/404kernel/kernel)
 [![CI & Release](https://github.com/404kernel/kernel/actions/workflows/ci.yml/badge.svg)](https://github.com/404kernel/kernel/actions)
@@ -10,6 +10,13 @@
 ```
 ╭────────────────────────────────────────────────────────────────────────────╮
 │ ⚡ KERNEL   [GEMINI :: gemini-2.5-flash]   cwd: /workspace/project         │
+╰────────────────────────────────────────────────────────────────────────────╯
+╭────────────────────────────────────────────────────────────────────────────╮
+│   /^ ^\     COMPANION: Sparky                                              │
+│  / • • \    Status: listening                                              │
+│  V\ Y /V                                                                   │
+│   / - \  ~                                                                 │
+│  (____)m                                                                   │
 ╰────────────────────────────────────────────────────────────────────────────╯
 
 ╭────────────────────────────────────────────────────────────────────────────╮
@@ -32,12 +39,14 @@
 [Enter] send · [Esc] cancel/exit · [q] quit
 ```
 
-`kernel` is a fast, standalone terminal workspace orchestrator designed for developers who live in their CLI. It features a reactive Terminal User Interface (TUI) powered by **Charmbracelet's Bubble Tea** and **Lip Gloss**, real-time token streaming, and multi-provider AI model orchestration.
+`kernel` is a fast, standalone terminal workspace orchestrator designed for developers who live in their CLI. It features a reactive Terminal User Interface (TUI) powered by **Charmbracelet's Bubble Tea** and **Lip Gloss**, real-time token streaming, multi-provider AI model orchestration, and an animated ASCII companion dog (**Sparky**) that reacts to your workflow!
 
 ---
 
 ## ✨ Features
 
+- 🐶 **Animated Pet Companion (Sparky)**:
+  - Reacts to state in real time: blinks, perches ears, sniffs & focuses when generating code, and wags its tail when tasks finish!
 - 🏎️ **Single Compiled Binary**: Zero node_modules, zero external runtimes. Single fast `.exe` / ELF binary.
 - 🎨 **Modern Cyber TUI**: Rounded neon box models, reactive viewport scrolling, streaming token indicators, and syntax-aware formatting.
 - 🧠 **Multi-Provider AI Engine**:
@@ -119,6 +128,8 @@ kernel/
 │   ├── ui/
 │   │   ├── model.go       # Bubble Tea state machine & Elm loop
 │   │   └── styles.go      # Lip Gloss color tokens & box geometries
+│   ├── pet/
+│   │   └── pet.go         # Animated ASCII dog state machine & frames
 │   └── ai/
 │       └── client.go      # Multi-provider streaming HTTP engine
 └── .github/workflows/

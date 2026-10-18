@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/404kernel/kernel/internal/ai"
+	"github.com/404kernel/kernel/internal/pet"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -23,6 +24,7 @@ type chatMessage struct {
 
 type Model struct {
 	aiClient   *ai.Client
+	pet        *pet.Pet
 	textInput  textinput.Model
 	viewport   viewport.Model
 	spinner    spinner.Model
@@ -30,8 +32,8 @@ type Model struct {
 	streamChan chan ai.StreamChunk
 	cancelFunc context.CancelFunc
 
-	Messages []chatMessage
-	Cwd      string
+	Messages    []chatMessage
+	Cwd         string
 	CurrentResp strings.Builder
 
 	width  int
@@ -40,6 +42,13 @@ type Model struct {
 }
 
 type streamMsg ai.StreamChunk
+type petTickMsg time.Time
+
+func petTicker() tea.Cmd {
+	return tea.Tick(180*time.Millisecond, func(t time.Time) tea.Msg {
+		return petTickMsg(t)
+	})
+}
 
 func NewModel(client *ai.Client) Model {
 	ti := textinput.New()
@@ -52,17 +61,20 @@ func NewModel(client *ai.Client) Model {
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(SecondaryColor)
 
+	p := pet.NewPet("Sparky")
+
 	cwd, _ := os.Getwd()
 
 	m := Model{
 		aiClient:  client,
+		pet:       p,
 		textInput: ti,
 		spinner:   s,
 		Cwd:       cwd,
 		Messages: []chatMessage{
 			{
 				Role:    "SYSTEM",
-				Content: fmt.Sprintf("Kernel AI Agent initialized. Connected to [%s] using model [%s]. Type your prompt below.", client.Provider, client.Model),
+				Content: fmt.Sprintf("Kernel AI Agent initialized. Connected to [%s] using [%s]. Sparky is ready to assist.", client.Provider, client.Model),
 				Time:    time.Now().Format("15:04"),
 			},
 		},
@@ -75,6 +87,7 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		textinput.Blink,
 		m.spinner.Tick,
+		petTicker(),
 	)
 }
 
@@ -86,12 +99,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	)
 
 	switch msg := msg.(type) {
+	case petTickMsg:
+		m.pet.Tick()
+		return m, petTicker()
+
 	case tea.KeyMsg:
 		switch msg.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
 			if m.streaming && m.cancelFunc != nil {
 				m.cancelFunc()
 				m.streaming = false
+				m.pet.SetState(pet.StateIdle)
 				m.Messages = append(m.Messages, chatMessage{
 					Role:    "SYSTEM",
 					Content: "Response generation canceled by user.",
@@ -116,6 +134,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.textInput.Reset()
 			m.CurrentResp.Reset()
 			m.streaming = true
+			m.pet.SetState(pet.StateThinking)
 
 			m.Messages = append(m.Messages, chatMessage{
 				Role:    "YOU",
@@ -135,6 +154,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case streamMsg:
 		if msg.Error != nil {
 			m.streaming = false
+			m.pet.SetState(pet.StateIdle)
 			m.Messages = append(m.Messages, chatMessage{
 				Role:    "ERROR",
 				Content: msg.Error.Error(),
@@ -145,6 +165,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.Done {
 			m.streaming = false
+			m.pet.SetState(pet.StateHappy)
 			if m.CurrentResp.Len() > 0 {
 				m.Messages = append(m.Messages, chatMessage{
 					Role:    "KERNEL",
@@ -171,9 +192,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.textInput.Width = contentWidth - 8
 
-		vpHeight := m.height - 10
-		if vpHeight < 8 {
-			vpHeight = 8
+		vpHeight := m.height - 15
+		if vpHeight < 6 {
+			vpHeight = 6
 		}
 
 		if !m.ready {
@@ -243,6 +264,21 @@ func (m Model) View() string {
 	cwdBadge := SubtitleStyle.Render(fmt.Sprintf("cwd: %s", m.Cwd))
 	headerBar := lipgloss.JoinHorizontal(lipgloss.Center, title, "  ", providerBadge, "  ", cwdBadge)
 	s.WriteString(HeaderBox.Render(headerBar) + "\n\n")
+
+	// Pet Companion Card (Header widget)
+	petBox := lipgloss.NewStyle().
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(PrimaryColor).
+		Padding(0, 1).
+		Render(
+			lipgloss.JoinHorizontal(
+				lipgloss.Center,
+				m.pet.Render(),
+				"   ",
+				fmt.Sprintf("%s\n%s", TitleStyle.Render("COMPANION: "+m.pet.Name), SubtitleStyle.Render("Status: "+m.pet.Mood)),
+			),
+		)
+	s.WriteString(petBox + "\n\n")
 
 	// Viewport (Chat conversation)
 	s.WriteString(m.viewport.View() + "\n\n")

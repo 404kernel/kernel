@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/404kernel/kernel/internal/config"
 	"github.com/404kernel/kernel/internal/ui"
@@ -11,6 +12,16 @@ import (
 )
 
 func main() {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "\n[FATAL PANIC]: %v\n", r)
+			if f, err := os.OpenFile("kernel_debug.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); err == nil {
+				fmt.Fprintf(f, "[%s] PANIC: %v\n", time.Now().Format(time.RFC3339), r)
+				f.Close()
+			}
+		}
+	}()
+
 	providerFlag := flag.String("provider", "", "AI provider override (gemini, claude, openai, ollama, demo)")
 	modelFlag := flag.String("model", "", "Model name override")
 	flag.Parse()

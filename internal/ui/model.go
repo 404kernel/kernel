@@ -52,7 +52,7 @@ type Model struct {
 
 	Messages    []chatMessage
 	Cwd         string
-	CurrentResp strings.Builder
+	CurrentResp string
 
 	width  int
 	height int
@@ -184,7 +184,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			m.textInput.Reset()
-			m.CurrentResp.Reset()
+			m.CurrentResp = ""
 			m.streaming = true
 			m.pet.SetState(pet.StateThinking)
 
@@ -218,19 +218,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Done {
 			m.streaming = false
 			m.pet.SetState(pet.StateHappy)
-			if m.CurrentResp.Len() > 0 {
+			if len(m.CurrentResp) > 0 {
 				m.Messages = append(m.Messages, chatMessage{
 					Role:    "KERNEL",
-					Content: m.CurrentResp.String(),
+					Content: m.CurrentResp,
 					Time:    time.Now().Format("15:04"),
 				})
-				m.CurrentResp.Reset()
+				m.CurrentResp = ""
 			}
 			m.updateViewport()
 			return m, nil
 		}
 
-		m.CurrentResp.WriteString(msg.Text)
+		m.CurrentResp += msg.Text
 		m.updateViewport()
 		return m, waitForStream(m.streamChan)
 
@@ -424,7 +424,7 @@ func (m *Model) updateViewport() {
 		dotAnim := dots[(m.TickCount/2)%len(dots)]
 		typingHeader := fmt.Sprintf("%s %s %s", AgentBadge.Render(" KERNEL "), TypingDotsStyle.Render(dotAnim), LogTimestamp.Render(time.Now().Format("15:04")))
 
-		content := m.CurrentResp.String()
+		content := m.CurrentResp
 		if content == "" {
 			content = SubtitleStyle.Render("Thinking and drafting solution...")
 		} else {

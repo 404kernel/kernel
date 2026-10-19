@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os/exec"
 	"runtime"
+	"strings"
 	"time"
 )
 
@@ -12,42 +13,76 @@ var (
 	VoiceEnabled = true
 )
 
-// Bark plays a quick synthesized audio bark / chime in the background
-func Bark() {
+// PlayCompanionSound plays an animal-specific vocalization or sci-fi sound effect
+func PlayCompanionSound(skin string) {
 	if !VoiceEnabled {
 		return
 	}
 
+	skin = strings.ToLower(skin)
+
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 		defer cancel()
 
 		if runtime.GOOS == "windows" {
-			// Fast acoustic beep sequence via PowerShell
-			cmd := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", "[console]::beep(800, 100); [console]::beep(1100, 150)")
+			var script string
+			switch skin {
+			case "cat":
+				// Cat cute meow vocalization
+				script = `& { Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.Rate = 2; $s.Speak('Meow!') }`
+			case "dragon":
+				// Dragon roar & low flame rumble
+				script = `& { [console]::beep(220, 150); [console]::beep(180, 250); Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.Rate = -2; $s.Speak('Rawr!') }`
+			case "drone":
+				// Futuristic digital sonar chirp sequence
+				script = `& { [console]::beep(1800, 40); [console]::beep(2400, 60); [console]::beep(3200, 80) }`
+			default: // "dog"
+				// Dog enthusiastic Woof vocalization + alert beep
+				script = `& { [console]::beep(600, 60); Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.Rate = 2; $s.Speak('Woof! Woof!') }`
+			}
+			cmd := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", script)
 			_ = cmd.Run()
 		} else if runtime.GOOS == "darwin" {
-			cmd := exec.CommandContext(ctx, "afplay", "/System/Library/Sounds/Tink.aiff")
-			_ = cmd.Run()
+			switch skin {
+			case "cat":
+				cmd := exec.CommandContext(ctx, "say", "-v", "Victoria", "Meow")
+				_ = cmd.Run()
+			case "dragon":
+				cmd := exec.CommandContext(ctx, "say", "-v", "Zarvox", "Rawr")
+				_ = cmd.Run()
+			case "drone":
+				cmd := exec.CommandContext(ctx, "afplay", "/System/Library/Sounds/Submarine.aiff")
+				_ = cmd.Run()
+			default:
+				cmd := exec.CommandContext(ctx, "say", "-v", "Fred", "Woof woof")
+				_ = cmd.Run()
+			}
 		} else {
-			// Linux bell
+			// Linux bell fallback
 			fmt.Print("\a")
 		}
 	}()
 }
 
-// LevelUpChime plays an ascending triumphant chime
+// Bark is a backwards-compatible alias for the dog vocalization
+func Bark() {
+	PlayCompanionSound("dog")
+}
+
+// LevelUpChime plays an ascending triumphant fanfare
 func LevelUpChime() {
 	if !VoiceEnabled {
 		return
 	}
 
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 		defer cancel()
 
 		if runtime.GOOS == "windows" {
-			cmd := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", "[console]::beep(523, 100); [console]::beep(659, 100); [console]::beep(784, 150); [console]::beep(1046, 250)")
+			script := `& { [console]::beep(523, 100); [console]::beep(659, 100); [console]::beep(784, 120); [console]::beep(1046, 220) }`
+			cmd := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", script)
 			_ = cmd.Run()
 		} else if runtime.GOOS == "darwin" {
 			cmd := exec.CommandContext(ctx, "afplay", "/System/Library/Sounds/Glass.aiff")
@@ -58,7 +93,7 @@ func LevelUpChime() {
 	}()
 }
 
-// Speak uses native system speech synthesis to speak a phrase aloud
+// Speak uses native system speech synthesis to speak any phrase aloud
 func Speak(text string) {
 	if !VoiceEnabled || text == "" {
 		return
@@ -69,18 +104,10 @@ func Speak(text string) {
 		defer cancel()
 
 		if runtime.GOOS == "windows" {
-			// Escape single quotes
-			safeText := ""
-			for _, r := range text {
-				if r == '\'' {
-					safeText += "''"
-				} else if r == '"' || r == '`' || r == '$' {
-					continue
-				} else {
-					safeText += string(r)
-				}
-			}
-			script := fmt.Sprintf("Add-Type -AssemblyName System.Speech; $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer; $synth.Rate = 1; $synth.Speak('%s')", safeText)
+			safeText := strings.ReplaceAll(text, "'", "''")
+			safeText = strings.ReplaceAll(safeText, "$", "")
+			safeText = strings.ReplaceAll(safeText, "`", "")
+			script := fmt.Sprintf("& { Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.Rate = 1; $s.Speak('%s') }", safeText)
 			cmd := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", script)
 			_ = cmd.Run()
 		} else if runtime.GOOS == "darwin" {

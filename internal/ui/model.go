@@ -249,13 +249,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				})
 				m.CurrentResp = ""
 
-				// Play audio bark & award pet XP on successful response
-				audio.Bark()
+				// Play animal-specific sound & award pet XP on successful response
+				audio.PlayCompanionSound(string(m.pet.Skin))
 				if leveledUp := m.pet.AddXP(15); leveledUp {
 					audio.LevelUpChime()
 					m.Messages = append(m.Messages, chatMessage{
 						Role:    "SYSTEM",
-						Content: fmt.Sprintf("🎉 Level Up! %s reached Level %d: [%s]! *happy bark!*", m.pet.Name, m.pet.Level, m.pet.Title()),
+						Content: fmt.Sprintf("🎉 Level Up! %s reached Level %d: [%s]!", m.pet.Name, m.pet.Level, m.pet.Title()),
 						Time:    time.Now().Format("15:04"),
 					})
 				}
@@ -557,10 +557,11 @@ func (m *Model) handleSlashCommand(input string) (tea.Model, tea.Cmd, bool) {
 		return m, nil, true
 	}
 
-	// Pet Sparky
+	// Pet Sparky / Companion
 	if cmd == "/pet" {
 		m.textInput.Reset()
 		feedback := m.pet.Pet()
+		audio.PlayCompanionSound(string(m.pet.Skin))
 		m.Messages = append(m.Messages, chatMessage{
 			Role:    "SYSTEM",
 			Content: fmt.Sprintf("%s\nLevel %d: [%s] | Affection: %d%%", feedback, m.pet.Level, m.pet.Title(), m.pet.Affection),
@@ -713,7 +714,7 @@ func (m *Model) handleSlashCommand(input string) (tea.Model, tea.Cmd, bool) {
 			})
 		} else {
 			feedback := m.pet.SetSkin(pet.SkinType(strings.ToLower(arg)))
-			audio.Bark()
+			audio.PlayCompanionSound(string(m.pet.Skin))
 			m.Messages = append(m.Messages, chatMessage{
 				Role:    "SYSTEM",
 				Content: feedback,

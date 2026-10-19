@@ -136,7 +136,7 @@ func (c *Client) streamDemo(ctx context.Context, prompt string, ch chan<- Stream
 }
 
 func (c *Client) streamGemini(ctx context.Context, prompt string, ch chan<- StreamChunk) {
-	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:streamGenerateContent?alt=sse&key=%s", c.Model, c.APIKey)
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", c.Model, c.APIKey)
 
 	payload := map[string]interface{}{
 		"contents": []map[string]interface{}{
@@ -169,39 +169,47 @@ func (c *Client) streamGemini(ctx context.Context, prompt string, ch chan<- Stre
 		return
 	}
 
-	// Use robust line reader to handle arbitrarily large code responses
-	reader := bufio.NewReader(resp.Body)
-	for {
-		line, err := reader.ReadString('\n')
-		if len(line) > 0 {
-			line = strings.TrimSpace(line)
-			if strings.HasPrefix(line, "data: ") {
-				jsonStr := strings.TrimPrefix(line, "data: ")
-				var data struct {
-					Candidates []struct {
-						Content struct {
-							Parts []struct {
-								Text string `json:"text"`
-							} `json:"parts"`
-						} `json:"content"`
-					} `json:"candidates"`
-				}
-				if jsonErr := json.Unmarshal([]byte(jsonStr), &data); jsonErr == nil {
-					for _, cand := range data.Candidates {
-						for _, part := range cand.Content.Parts {
-							if part.Text != "" {
-								ch <- StreamChunk{Text: part.Text}
-							}
-						}
-					}
-				}
-			}
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		ch <- StreamChunk{Error: err, Done: true}
+		return
+	}
+
+	var data struct {
+		Candidates []struct {
+			Content struct {
+				Parts []struct {
+					Text string `json:"text"`
+				} `json:"parts"`
+			} `json:"content"`
+		} `json:"candidates"`
+	}
+	if err := json.Unmarshal(respBody, &data); err != nil {
+		ch <- StreamChunk{Error: fmt.Errorf("failed to parse gemini response: %w", err), Done: true}
+		return
+	}
+
+	var fullText string
+	for _, cand := range data.Candidates {
+		for _, part := range cand.Content.Parts {
+			fullText += part.Text
 		}
-		if err != nil {
-			if err != io.EOF && ctx.Err() == nil {
-				ch <- StreamChunk{Error: err}
-			}
-			break
+	}
+
+	if fullText == "" {
+		ch <- StreamChunk{Text: "(No response returned from model)", Done: true}
+		return
+	}
+
+	// Smoothly stream chunks to give pleasant live typing UX
+	words := strings.SplitAfter(fullText, " ")
+	for _, word := range words {
+		select {
+		case <-ctx.Done():
+			ch <- StreamChunk{Error: ctx.Err(), Done: true}
+			return
+		case <-time.After(15 * time.Millisecond):
+			ch <- StreamChunk{Text: word}
 		}
 	}
 	ch <- StreamChunk{Done: true}

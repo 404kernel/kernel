@@ -42,8 +42,8 @@ func NewClientFromConfig(cfg *config.Config) *Client {
 	switch provider {
 	case ProviderGemini:
 		key = cfg.GeminiAPIKey
-		if model == "" || model == "gemini-2.5-flash" || model == "gemini-1.5-flash" {
-			model = "gemini-flash-latest"
+		if model == "" || model == "gemini-flash-latest" || model == "gemini-2.5-flash" || model == "gemini-1.5-flash" {
+			model = "gemini-3.5-flash"
 		}
 	case ProviderClaude:
 		key = cfg.AnthropicKey
@@ -201,15 +201,21 @@ func (c *Client) streamGemini(ctx context.Context, prompt string, ch chan<- Stre
 		return
 	}
 
-	// Smoothly stream chunks to give pleasant live typing UX
+	// Smoothly stream chunks to give fast, fluid live typing UX
 	words := strings.SplitAfter(fullText, " ")
-	for _, word := range words {
+	batchSize := 2
+	for i := 0; i < len(words); i += batchSize {
+		end := i + batchSize
+		if end > len(words) {
+			end = len(words)
+		}
+		chunk := strings.Join(words[i:end], "")
 		select {
 		case <-ctx.Done():
 			ch <- StreamChunk{Error: ctx.Err(), Done: true}
 			return
-		case <-time.After(15 * time.Millisecond):
-			ch <- StreamChunk{Text: word}
+		case <-time.After(8 * time.Millisecond):
+			ch <- StreamChunk{Text: chunk}
 		}
 	}
 	ch <- StreamChunk{Done: true}

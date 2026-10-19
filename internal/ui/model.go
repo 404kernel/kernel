@@ -298,7 +298,7 @@ func (m *Model) handleWizardEnterKey() (tea.Model, tea.Cmd) {
 		switch m.WizardProvider {
 		case "gemini":
 			m.cfg.GeminiAPIKey = key
-			m.cfg.Model = "gemini-1.5-flash"
+			m.cfg.Model = "gemini-flash-latest"
 		case "claude":
 			m.cfg.AnthropicKey = key
 			m.cfg.Model = "claude-3-5-sonnet-latest"

@@ -95,20 +95,31 @@ Most CLI AI tools are either bloated Python scripts or plain text wrappers that 
 
 ## 🚀 Quick Start
 
-### Option 1: Download Pre-built Binary (Recommended)
+### Option 1: One-Line Install (Fastest)
 
-Grab the pre-compiled binary for your system from the [Releases](https://github.com/404kernel/kernel/releases) page:
+**Windows (PowerShell):**
+```powershell
+iwr -useb https://raw.githubusercontent.com/404kernel/kernel/main/install.ps1 | iex
+```
 
+**Linux & macOS (Bash/Zsh):**
+```bash
+curl -sSL https://raw.githubusercontent.com/404kernel/kernel/main/install.sh | bash
+```
+
+### Option 2: Pre-compiled Binaries
+
+Download from the [Releases](https://github.com/404kernel/kernel/releases) page:
 - **Windows**: `kernel-windows-amd64.exe` / `kernel-windows-arm64.exe`
-- **macOS (Apple Silicon & Intel)**: `kernel-darwin-arm64` / `kernel-darwin-amd64`
+- **macOS**: `kernel-darwin-arm64` / `kernel-darwin-amd64`
 - **Linux**: `kernel-linux-amd64` / `kernel-linux-arm64`
 
-### Option 2: Go Install
+### Option 3: Go Install
 ```bash
 go install github.com/404kernel/kernel@latest
 ```
 
-### Option 3: Build From Source
+### Option 4: Build From Source
 ```bash
 # Clone the repository
 git clone https://github.com/404kernel/kernel.git

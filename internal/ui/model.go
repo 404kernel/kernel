@@ -529,6 +529,7 @@ func (m *Model) handleSlashCommand(input string) (tea.Model, tea.Cmd, bool) {
 			"- `/web <query>` — Live zero-key web search\n" +
 			"- `/voice [on|off]` — Toggle audio synthesis & chimes\n" +
 			"- `/speak <text>` — Read text aloud with system TTS\n" +
+			"- `/stats` — Live system telemetry, RAM & CPU dashboard\n" +
 			"- `/model <name>` — Switch active model dynamically\n" +
 			"- `/save [filename]` — Export conversation to Markdown file\n" +
 			"- `/exec <cmd>` or `$ <cmd>` — Run shell commands inside Kernel\n" +
@@ -765,6 +766,21 @@ func (m *Model) handleSlashCommand(input string) (tea.Model, tea.Cmd, bool) {
 				Time:    time.Now().Format("15:04"),
 			})
 		}
+		m.updateViewport()
+		return m, nil, true
+	}
+
+	// Live System Telemetry (/stats or /sys)
+	if cmd == "/stats" || cmd == "/sys" {
+		m.textInput.Reset()
+		telem := tools.GetSystemTelemetry()
+		formatted := tools.FormatSystemTelemetry(telem)
+		m.Messages = append(m.Messages, chatMessage{
+			Role:    "KERNEL",
+			Content: formatted,
+			Time:    time.Now().Format("15:04"),
+		})
+		m.pet.AddXP(10)
 		m.updateViewport()
 		return m, nil, true
 	}

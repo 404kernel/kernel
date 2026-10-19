@@ -30,16 +30,16 @@ func PlayCompanionSound(skin string) {
 			switch skin {
 			case "cat":
 				// Cat cute meow vocalization
-				script = `& { Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.Rate = 2; $s.Speak('Meow!') }`
+				script = `(New-Object -ComObject SAPI.SpVoice).Speak('Meow!')`
 			case "dragon":
-				// Dragon roar & low flame rumble
-				script = `& { [console]::beep(220, 150); [console]::beep(180, 250); Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.Rate = -2; $s.Speak('Rawr!') }`
+				// Dragon roar
+				script = `[console]::beep(200, 150); (New-Object -ComObject SAPI.SpVoice).Speak('Rawr!')`
 			case "drone":
 				// Futuristic digital sonar chirp sequence
-				script = `& { [console]::beep(1800, 40); [console]::beep(2400, 60); [console]::beep(3200, 80) }`
+				script = `[console]::beep(1800, 40); [console]::beep(2400, 60); [console]::beep(3200, 80)`
 			default: // "dog"
-				// Dog enthusiastic Woof vocalization + alert beep
-				script = `& { [console]::beep(600, 60); Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.Rate = 2; $s.Speak('Woof! Woof!') }`
+				// Dog enthusiastic Woof vocalization
+				script = `(New-Object -ComObject SAPI.SpVoice).Speak('Woof! Woof!')`
 			}
 			cmd := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", script)
 			_ = cmd.Run()
@@ -107,7 +107,7 @@ func Speak(text string) {
 			safeText := strings.ReplaceAll(text, "'", "''")
 			safeText = strings.ReplaceAll(safeText, "$", "")
 			safeText = strings.ReplaceAll(safeText, "`", "")
-			script := fmt.Sprintf("& { Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.Rate = 1; $s.Speak('%s') }", safeText)
+			script := fmt.Sprintf("(New-Object -ComObject SAPI.SpVoice).Speak('%s')", safeText)
 			cmd := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", script)
 			_ = cmd.Run()
 		} else if runtime.GOOS == "darwin" {

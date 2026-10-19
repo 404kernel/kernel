@@ -131,7 +131,14 @@ Kernel includes a suite of instant commands accessible directly from the input b
 |---|---|
 | `/help` | Displays the interactive command and shortcuts reference |
 | `/clear` | Clears the viewport for a clean conversation |
-| `/pet` | Pet Sparky! (+20 XP, restores affection to 100% ♥) |
+| `/pet` | Pet companion (+20 XP, restores affection to 100% ♥) |
+| `/skin <name>` | Change companion avatar (`cat`, `dragon`, `drone`, `dog`) |
+| `/stats` | Live system telemetry, RAM & CPU dashboard |
+| `/tree [dir]` | Visual directory tree explorer with file type icons |
+| `/diff <file>` | Inspect git diffs directly in the terminal |
+| `/auto <goal>` | Autonomous coding agent workflow |
+| `/voice [on/off]` | Toggle sound effects, barks, and chimes |
+| `/speak <text>` | Text-to-speech audio reader |
 | `/model <id>` | Dynamically switch models (e.g. `/model gemini-3.5-flash`, `/model gpt-4o`) |
 | `/web <query>` | Performs a zero-key live web search and returns markdown summaries |
 | `/read <path>` | Reads and displays syntax-highlighted code from any project file |

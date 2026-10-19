@@ -12,6 +12,7 @@ import (
 	"github.com/404kernel/kernel/internal/exec"
 	"github.com/404kernel/kernel/internal/history"
 	"github.com/404kernel/kernel/internal/pet"
+	"github.com/404kernel/kernel/internal/tools"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -518,6 +519,8 @@ func (m *Model) handleSlashCommand(input string) (tea.Model, tea.Cmd, bool) {
 			"- `/pet` — Pet Sparky (+20 XP, Affection 100%)\n" +
 			"- `/model <name>` — Switch active model dynamically\n" +
 			"- `/save [filename]` — Export conversation to Markdown file\n" +
+			"- `/read <file>` — Read and inspect file contents\n" +
+			"- `/web <query>` — Live zero-key web search\n" +
 			"- `/exec <cmd>` or `$ <cmd>` — Run shell commands inside Kernel\n" +
 			"- `/quit` or `:q` — Save session history and exit\n"
 		m.textInput.Reset()
@@ -604,6 +607,86 @@ func (m *Model) handleSlashCommand(input string) (tea.Model, tea.Cmd, bool) {
 				Content: fmt.Sprintf("Session successfully saved to: `%s`", savedFile),
 				Time:    time.Now().Format("15:04"),
 			})
+		}
+		m.updateViewport()
+		return m, nil, true
+	}
+
+	// Live Web Search (/web <query>)
+	if cmd == "/web" {
+		m.textInput.Reset()
+		if arg == "" {
+			m.Messages = append(m.Messages, chatMessage{
+				Role:    "SYSTEM",
+				Content: "Usage: `/web <search-query>` (e.g. `/web golang bubbletea tutorials`)",
+				Time:    time.Now().Format("15:04"),
+			})
+			m.updateViewport()
+			return m, nil, true
+		}
+
+		m.Messages = append(m.Messages, chatMessage{
+			Role:    "YOU",
+			Content: "/web " + arg,
+			Time:    time.Now().Format("15:04"),
+		})
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		results, err := tools.SearchWeb(ctx, arg)
+		if err != nil {
+			m.Messages = append(m.Messages, chatMessage{
+				Role:    "ERROR",
+				Content: fmt.Sprintf("Web search error: %v", err),
+				Time:    time.Now().Format("15:04"),
+			})
+		} else {
+			formatted := tools.FormatSearchResults(arg, results)
+			m.Messages = append(m.Messages, chatMessage{
+				Role:    "KERNEL",
+				Content: formatted,
+				Time:    time.Now().Format("15:04"),
+			})
+			m.pet.AddXP(10)
+			m.pet.SetState(pet.StateHappy)
+		}
+		m.updateViewport()
+		return m, nil, true
+	}
+
+	// Read File (/read <path>)
+	if cmd == "/read" {
+		m.textInput.Reset()
+		if arg == "" {
+			m.Messages = append(m.Messages, chatMessage{
+				Role:    "SYSTEM",
+				Content: "Usage: `/read <relative-or-absolute-filepath>`",
+				Time:    time.Now().Format("15:04"),
+			})
+			m.updateViewport()
+			return m, nil, true
+		}
+
+		m.Messages = append(m.Messages, chatMessage{
+			Role:    "YOU",
+			Content: "/read " + arg,
+			Time:    time.Now().Format("15:04"),
+		})
+
+		content, err := tools.ReadWorkspaceFile(arg)
+		if err != nil {
+			m.Messages = append(m.Messages, chatMessage{
+				Role:    "ERROR",
+				Content: fmt.Sprintf("Failed to read file: %v", err),
+				Time:    time.Now().Format("15:04"),
+			})
+		} else {
+			m.Messages = append(m.Messages, chatMessage{
+				Role:    "KERNEL",
+				Content: fmt.Sprintf("### File: `%s`\n\n```\n%s\n```", arg, content),
+				Time:    time.Now().Format("15:04"),
+			})
+			m.pet.AddXP(10)
 		}
 		m.updateViewport()
 		return m, nil, true

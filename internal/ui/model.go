@@ -23,6 +23,8 @@ const (
 	ModeChat AppMode = iota
 	ModeWizardSelectProvider
 	ModeWizardEnterKey
+	ModeWizardCustomBaseURL
+	ModeWizardCustomModel
 )
 
 type chatMessage struct {
@@ -44,9 +46,13 @@ type Model struct {
 
 	Mode           AppMode
 	WizardProvider string
-	Messages       []chatMessage
-	Cwd            string
-	CurrentResp    strings.Builder
+	TempCustomURL  string
+	TempCustomKey  string
+	TickCount      int
+
+	Messages    []chatMessage
+	Cwd         string
+	CurrentResp strings.Builder
 
 	width  int
 	height int
@@ -57,7 +63,7 @@ type streamMsg ai.StreamChunk
 type petTickMsg time.Time
 
 func petTicker() tea.Cmd {
-	return tea.Tick(180*time.Millisecond, func(t time.Time) tea.Msg {
+	return tea.Tick(140*time.Millisecond, func(t time.Time) tea.Msg {
 		return petTickMsg(t)
 	})
 }
@@ -65,7 +71,7 @@ func petTicker() tea.Cmd {
 func NewModel(cfg *config.Config) Model {
 	ti := textinput.New()
 	ti.Focus()
-	ti.CharLimit = 1024
+	ti.CharLimit = 4096
 	ti.Width = 60
 
 	s := spinner.New()
@@ -78,9 +84,9 @@ func NewModel(cfg *config.Config) Model {
 	initialMode := ModeChat
 	if !cfg.HasValidKey() && cfg.Provider != "demo" {
 		initialMode = ModeWizardSelectProvider
-		ti.Placeholder = "Type 1, 2, 3, 4, or 5..."
+		ti.Placeholder = "Type 1-5 and press Enter..."
 	} else {
-		ti.Placeholder = "Ask kernel to explain code, generate commands, or solve problems..."
+		ti.Placeholder = "Ask kernel to explain code, generate a game, or run tasks..."
 	}
 
 	client := ai.NewClientFromConfig(cfg)
@@ -123,11 +129,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case petTickMsg:
 		m.pet.Tick()
+		m.TickCount++
+		if m.streaming {
+			m.updateViewport()
+		}
 		return m, petTicker()
 
 	case tea.KeyMsg:
 		switch msg.Type {
-		case tea.KeyCtrlC, tea.KeyEsc:
+		case tea.KeyCtrlC:
 			if m.streaming && m.cancelFunc != nil {
 				m.cancelFunc()
 				m.streaming = false
@@ -141,11 +151,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			return m, tea.Quit
+		case tea.KeyEsc:
+			if m.streaming && m.cancelFunc != nil {
+				m.cancelFunc()
+				m.streaming = false
+				m.pet.SetState(pet.StateIdle)
+				m.updateViewport()
+				return m, nil
+			}
 		case tea.KeyEnter:
 			if m.Mode == ModeWizardSelectProvider {
 				return m.handleWizardSelect()
 			} else if m.Mode == ModeWizardEnterKey {
 				return m.handleWizardEnterKey()
+			} else if m.Mode == ModeWizardCustomBaseURL {
+				return m.handleWizardCustomBaseURL()
+			} else if m.Mode == ModeWizardCustomModel {
+				return m.handleWizardCustomModel()
 			}
 
 			// Normal Chat Mode
@@ -156,7 +178,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if input == "" {
 				return m, nil
 			}
-			if input == "q" || input == "exit" {
+			// Only quit if user explicitly enters :q or /quit, NOT when asking a question containing 'q'
+			if input == ":q" || input == "/quit" || input == "exit" {
 				return m, tea.Quit
 			}
 
@@ -174,7 +197,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			ctx, cancel := context.WithCancel(context.Background())
 			m.cancelFunc = cancel
-			m.streamChan = make(chan ai.StreamChunk, 30)
+			m.streamChan = make(chan ai.StreamChunk, 50)
 			go m.aiClient.Stream(ctx, input, m.streamChan)
 
 			return m, waitForStream(m.streamChan)
@@ -266,18 +289,22 @@ func (m *Model) handleWizardSelect() (tea.Model, tea.Cmd) {
 		_ = config.SaveConfig(m.cfg)
 		m.aiClient = ai.NewClientFromConfig(m.cfg)
 		m.Mode = ModeChat
-		m.textInput.Placeholder = "Ask kernel to explain code, generate commands, or solve problems..."
+		m.textInput.Placeholder = "Ask kernel to explain code, generate a game, or run tasks..."
 		m.Messages = append(m.Messages, chatMessage{
 			Role:    "SYSTEM",
 			Content: "Ollama configured (http://localhost:11434). Ready!",
 			Time:    time.Now().Format("15:04"),
 		})
 		m.updateViewport()
+	case "5":
+		m.WizardProvider = "custom"
+		m.Mode = ModeWizardCustomBaseURL
+		m.textInput.Placeholder = "Enter Custom Base URL (e.g. https://api.deepseek.com/v1)..."
 	default:
 		m.cfg.Provider = "demo"
 		m.aiClient = ai.NewClientFromConfig(m.cfg)
 		m.Mode = ModeChat
-		m.textInput.Placeholder = "Ask kernel to explain code, generate commands, or solve problems..."
+		m.textInput.Placeholder = "Ask kernel to explain code, generate a game, or run tasks..."
 		m.Messages = append(m.Messages, chatMessage{
 			Role:    "SYSTEM",
 			Content: "Running in Interactive Demo Mode.",
@@ -289,9 +316,28 @@ func (m *Model) handleWizardSelect() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) handleWizardCustomBaseURL() (tea.Model, tea.Cmd) {
+	url := strings.TrimSpace(m.textInput.Value())
+	m.textInput.Reset()
+	if url == "" {
+		url = "https://api.deepseek.com/v1"
+	}
+	m.TempCustomURL = url
+	m.Mode = ModeWizardEnterKey
+	m.textInput.Placeholder = "Paste your API Key for this endpoint..."
+	return m, nil
+}
+
 func (m *Model) handleWizardEnterKey() (tea.Model, tea.Cmd) {
 	key := strings.TrimSpace(m.textInput.Value())
 	m.textInput.Reset()
+
+	if m.WizardProvider == "custom" {
+		m.TempCustomKey = key
+		m.Mode = ModeWizardCustomModel
+		m.textInput.Placeholder = "Enter model name (e.g. deepseek-chat, mistral-large)..."
+		return m, nil
+	}
 
 	if key != "" {
 		m.cfg.Provider = m.WizardProvider
@@ -312,10 +358,39 @@ func (m *Model) handleWizardEnterKey() (tea.Model, tea.Cmd) {
 
 	m.Mode = ModeChat
 	m.pet.SetState(pet.StateHappy)
-	m.textInput.Placeholder = "Ask kernel to explain code, generate commands, or solve problems..."
+	m.textInput.Placeholder = "Ask kernel to explain code, generate a game, or run tasks..."
 	m.Messages = append(m.Messages, chatMessage{
 		Role:    "SYSTEM",
 		Content: fmt.Sprintf("Setup complete! Connected to [%s]. Configuration saved to ~/.kernel/config.json", m.cfg.Provider),
+		Time:    time.Now().Format("15:04"),
+	})
+	m.updateViewport()
+
+	return m, nil
+}
+
+func (m *Model) handleWizardCustomModel() (tea.Model, tea.Cmd) {
+	modelName := strings.TrimSpace(m.textInput.Value())
+	m.textInput.Reset()
+	if modelName == "" {
+		modelName = "deepseek-chat"
+	}
+
+	m.cfg.Provider = "custom"
+	m.cfg.CustomEndpoint = m.TempCustomURL
+	m.cfg.CustomKey = m.TempCustomKey
+	m.cfg.CustomModel = modelName
+	m.cfg.Model = modelName
+
+	_ = config.SaveConfig(m.cfg)
+	m.aiClient = ai.NewClientFromConfig(m.cfg)
+
+	m.Mode = ModeChat
+	m.pet.SetState(pet.StateHappy)
+	m.textInput.Placeholder = "Ask kernel to explain code, generate a game, or run tasks..."
+	m.Messages = append(m.Messages, chatMessage{
+		Role:    "SYSTEM",
+		Content: fmt.Sprintf("Custom API connected: [%s / %s]. Configuration saved to ~/.kernel/config.json", m.cfg.CustomEndpoint, m.cfg.CustomModel),
 		Time:    time.Now().Format("15:04"),
 	})
 	m.updateViewport()
@@ -344,9 +419,19 @@ func (m *Model) updateViewport() {
 		b.WriteString(bubble + "\n\n")
 	}
 
-	if m.streaming && m.CurrentResp.Len() > 0 {
-		header := fmt.Sprintf("%s %s %s", AgentBadge.Render(" KERNEL "), m.spinner.View(), LogTimestamp.Render(time.Now().Format("15:04")))
-		bubble := StreamingBubble.Render(fmt.Sprintf("%s\n\n%s", header, m.CurrentResp.String()))
+	if m.streaming {
+		dots := []string{"● ○ ○", "○ ● ○", "○ ○ ●", "● ● ●"}
+		dotAnim := dots[(m.TickCount/2)%len(dots)]
+		typingHeader := fmt.Sprintf("%s %s %s", AgentBadge.Render(" KERNEL "), TypingDotsStyle.Render(dotAnim), LogTimestamp.Render(time.Now().Format("15:04")))
+
+		content := m.CurrentResp.String()
+		if content == "" {
+			content = SubtitleStyle.Render("Thinking and drafting solution...")
+		} else {
+			content += CursorStyle.Render(" ▋")
+		}
+
+		bubble := StreamingBubble.Render(fmt.Sprintf("%s\n\n%s", typingHeader, content))
 		b.WriteString(bubble + "\n")
 	}
 
@@ -397,15 +482,41 @@ func (m Model) View() string {
 			Padding(1, 2).
 			Render(
 				TitleStyle.Render("SETUP WIZARD // CHOOSE AI PROVIDER") + "\n\n" +
-					"No active API key detected. Select a provider:\n\n" +
-					" [1] Google Gemini  (Free Tier API Key - Recommended)\n" +
+					"Select an AI model provider:\n\n" +
+					" [1] Google Gemini  (Free Tier API Key - gemini-flash-latest)\n" +
 					" [2] Anthropic Claude (Sonnet 3.5 / Haiku)\n" +
 					" [3] OpenAI (GPT-4o)\n" +
 					" [4] Local Ollama (Free, runs offline on localhost:11434)\n" +
-					" [5] Try Demo Mode (Explore interface without a key)\n\n" +
-					SubtitleStyle.Render("Type 1-5 and press Enter:"),
+					" [5] Custom OpenAI-Compatible (DeepSeek, OpenRouter, Groq, Together)\n" +
+					" [6] Try Demo Mode (Explore interface without a key)\n\n" +
+					SubtitleStyle.Render("Type 1-6 and press Enter:"),
 			)
 		s.WriteString(wizardMenu + "\n\n")
+	} else if m.Mode == ModeWizardCustomBaseURL {
+		menu := lipgloss.NewStyle().
+			BorderStyle(lipgloss.RoundedBorder()).
+			BorderForeground(SecondaryColor).
+			Padding(1, 2).
+			Render(
+				TitleStyle.Render("CUSTOM API // ENTER BASE URL") + "\n\n" +
+					"Examples:\n" +
+					"  DeepSeek:   https://api.deepseek.com/v1\n" +
+					"  OpenRouter: https://openrouter.ai/api/v1\n" +
+					"  Groq:       https://api.groq.com/openai/v1\n\n" +
+					SubtitleStyle.Render("Enter base URL and press Enter:"),
+			)
+		s.WriteString(menu + "\n\n")
+	} else if m.Mode == ModeWizardCustomModel {
+		menu := lipgloss.NewStyle().
+			BorderStyle(lipgloss.RoundedBorder()).
+			BorderForeground(SecondaryColor).
+			Padding(1, 2).
+			Render(
+				TitleStyle.Render("CUSTOM API // ENTER MODEL NAME") + "\n\n" +
+					"Examples: deepseek-chat, deepseek-reasoner, llama-3.3-70b-versatile\n\n" +
+					SubtitleStyle.Render("Enter model name and press Enter:"),
+			)
+		s.WriteString(menu + "\n\n")
 	} else if m.Mode == ModeWizardEnterKey {
 		keyMenu := lipgloss.NewStyle().
 			BorderStyle(lipgloss.RoundedBorder()).
@@ -413,7 +524,7 @@ func (m Model) View() string {
 			Padding(1, 2).
 			Render(
 				TitleStyle.Render(fmt.Sprintf("ENTER %s API KEY", strings.ToUpper(m.WizardProvider))) + "\n\n" +
-					fmt.Sprintf("Key will be securely saved to ~/.kernel/config.json.\n") +
+					"Key will be securely saved to ~/.kernel/config.json.\n" +
 					SubtitleStyle.Render("Paste your key below and press Enter (or press Enter to skip):"),
 			)
 		s.WriteString(keyMenu + "\n\n")
@@ -431,7 +542,7 @@ func (m Model) View() string {
 
 	// Footer Keybind Hints
 	s.WriteString(FooterStyle.Render(
-		fmt.Sprintf("%s submit · %s cancel/exit · %s quit", FooterKey.Render("Enter"), FooterKey.Render("Esc"), FooterKey.Render("q")),
+		fmt.Sprintf("%s submit · %s cancel stream · %s quit", FooterKey.Render("Enter"), FooterKey.Render("Ctrl+C"), FooterKey.Render(":q")),
 	))
 
 	return s.String()

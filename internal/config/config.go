@@ -13,6 +13,9 @@ type Config struct {
 	AnthropicKey   string `json:"anthropic_api_key,omitempty"`
 	OpenAIAPIKey   string `json:"openai_api_key,omitempty"`
 	OllamaEndpoint string `json:"ollama_endpoint,omitempty"`
+	CustomEndpoint string `json:"custom_endpoint,omitempty"`
+	CustomKey      string `json:"custom_key,omitempty"`
+	CustomModel    string `json:"custom_model,omitempty"`
 }
 
 func GetConfigDir() (string, error) {
@@ -43,7 +46,6 @@ func LoadConfig() (*Config, error) {
 
 	data, err := os.ReadFile(path)
 	if err != nil {
-		// Fallback to environment variables
 		cfg := &Config{
 			Provider:       "gemini",
 			Model:          "gemini-flash-latest",
@@ -51,6 +53,9 @@ func LoadConfig() (*Config, error) {
 			AnthropicKey:   os.Getenv("ANTHROPIC_API_KEY"),
 			OpenAIAPIKey:   os.Getenv("OPENAI_API_KEY"),
 			OllamaEndpoint: "http://localhost:11434",
+			CustomEndpoint: os.Getenv("CUSTOM_API_BASE"),
+			CustomKey:      os.Getenv("CUSTOM_API_KEY"),
+			CustomModel:    os.Getenv("CUSTOM_MODEL"),
 		}
 		return cfg, nil
 	}
@@ -64,7 +69,6 @@ func LoadConfig() (*Config, error) {
 		cfg.Model = "gemini-flash-latest"
 	}
 
-	// Environment variables always override config file if set
 	if envKey := os.Getenv("GEMINI_API_KEY"); envKey != "" {
 		cfg.GeminiAPIKey = envKey
 	}
@@ -73,6 +77,9 @@ func LoadConfig() (*Config, error) {
 	}
 	if envKey := os.Getenv("OPENAI_API_KEY"); envKey != "" {
 		cfg.OpenAIAPIKey = envKey
+	}
+	if envEndpoint := os.Getenv("CUSTOM_API_BASE"); envEndpoint != "" {
+		cfg.CustomEndpoint = envEndpoint
 	}
 
 	return &cfg, nil
@@ -101,8 +108,10 @@ func (c *Config) HasValidKey() bool {
 	case "openai":
 		return c.OpenAIAPIKey != ""
 	case "ollama":
-		return true // Ollama runs locally without key
+		return true
+	case "custom":
+		return c.CustomEndpoint != ""
 	default:
-		return c.GeminiAPIKey != "" || c.AnthropicKey != "" || c.OpenAIAPIKey != ""
+		return c.GeminiAPIKey != "" || c.AnthropicKey != "" || c.OpenAIAPIKey != "" || c.CustomEndpoint != ""
 	}
 }

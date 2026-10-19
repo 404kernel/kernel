@@ -59,6 +59,14 @@ var (
 			Background(DangerColor).
 			Padding(0, 1)
 
+	TypingDotsStyle = lipgloss.NewStyle().
+			Foreground(SecondaryColor).
+			Bold(true)
+
+	CursorStyle = lipgloss.NewStyle().
+			Foreground(AccentColor).
+			Blink(true)
+
 	LogTimestamp = lipgloss.NewStyle().
 			Foreground(MutedColor)
 

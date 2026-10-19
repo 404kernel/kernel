@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -20,6 +21,7 @@ const (
 	ProviderClaude Provider = "claude"
 	ProviderOpenAI Provider = "openai"
 	ProviderOllama Provider = "ollama"
+	ProviderCustom Provider = "custom"
 	ProviderDemo   Provider = "demo"
 )
 
@@ -34,6 +36,7 @@ type Client struct {
 func NewClientFromConfig(cfg *config.Config) *Client {
 	provider := Provider(cfg.Provider)
 	var key string
+	var baseURL string
 	model := cfg.Model
 
 	switch provider {
@@ -53,12 +56,23 @@ func NewClientFromConfig(cfg *config.Config) *Client {
 			model = "gpt-4o"
 		}
 	case ProviderOllama:
+		baseURL = cfg.OllamaEndpoint
+		if baseURL == "" {
+			baseURL = "http://localhost:11434"
+		}
 		if model == "" {
 			model = "llama3"
 		}
+	case ProviderCustom:
+		key = cfg.CustomKey
+		baseURL = cfg.CustomEndpoint
+		model = cfg.CustomModel
+		if model == "" {
+			model = "default"
+		}
 	}
 
-	if key == "" && provider != ProviderOllama {
+	if key == "" && provider != ProviderOllama && provider != ProviderCustom {
 		provider = ProviderDemo
 	}
 
@@ -66,8 +80,9 @@ func NewClientFromConfig(cfg *config.Config) *Client {
 		Provider: provider,
 		APIKey:   key,
 		Model:    model,
+		BaseURL:  baseURL,
 		HTTP: &http.Client{
-			Timeout: 60 * time.Second,
+			Timeout: 180 * time.Second, // generous timeout for large code generation
 		},
 	}
 }
@@ -91,7 +106,7 @@ func (c *Client) Stream(ctx context.Context, prompt string, ch chan<- StreamChun
 		c.streamGemini(ctx, prompt, ch)
 	case ProviderClaude:
 		c.streamClaude(ctx, prompt, ch)
-	case ProviderOpenAI, ProviderOllama:
+	case ProviderOpenAI, ProviderOllama, ProviderCustom:
 		c.streamOpenAI(ctx, prompt, ch)
 	default:
 		c.streamDemo(ctx, prompt, ch)
@@ -154,30 +169,28 @@ func (c *Client) streamGemini(ctx context.Context, prompt string, ch chan<- Stre
 		return
 	}
 
-	buf := make([]byte, 2048)
+	// Use robust line reader to handle arbitrarily large code responses
+	reader := bufio.NewReader(resp.Body)
 	for {
-		n, err := resp.Body.Read(buf)
-		if n > 0 {
-			raw := string(buf[:n])
-			lines := strings.Split(raw, "\n")
-			for _, line := range lines {
-				if strings.HasPrefix(line, "data: ") {
-					jsonStr := strings.TrimPrefix(line, "data: ")
-					var data struct {
-						Candidates []struct {
-							Content struct {
-								Parts []struct {
-									Text string `json:"text"`
-								} `json:"parts"`
-							} `json:"content"`
-						} `json:"candidates"`
-					}
-					if err := json.Unmarshal([]byte(jsonStr), &data); err == nil {
-						for _, cand := range data.Candidates {
-							for _, part := range cand.Content.Parts {
-								if part.Text != "" {
-									ch <- StreamChunk{Text: part.Text}
-								}
+		line, err := reader.ReadString('\n')
+		if len(line) > 0 {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "data: ") {
+				jsonStr := strings.TrimPrefix(line, "data: ")
+				var data struct {
+					Candidates []struct {
+						Content struct {
+							Parts []struct {
+								Text string `json:"text"`
+							} `json:"parts"`
+						} `json:"content"`
+					} `json:"candidates"`
+				}
+				if jsonErr := json.Unmarshal([]byte(jsonStr), &data); jsonErr == nil {
+					for _, cand := range data.Candidates {
+						for _, part := range cand.Content.Parts {
+							if part.Text != "" {
+								ch <- StreamChunk{Text: part.Text}
 							}
 						}
 					}
@@ -185,7 +198,7 @@ func (c *Client) streamGemini(ctx context.Context, prompt string, ch chan<- Stre
 			}
 		}
 		if err != nil {
-			if err != io.EOF {
+			if err != io.EOF && ctx.Err() == nil {
 				ch <- StreamChunk{Error: err}
 			}
 			break
@@ -229,25 +242,22 @@ func (c *Client) streamClaude(ctx context.Context, prompt string, ch chan<- Stre
 		return
 	}
 
-	buf := make([]byte, 2048)
+	reader := bufio.NewReader(resp.Body)
 	for {
-		n, err := resp.Body.Read(buf)
-		if n > 0 {
-			raw := string(buf[:n])
-			lines := strings.Split(raw, "\n")
-			for _, line := range lines {
-				if strings.HasPrefix(line, "data: ") {
-					jsonStr := strings.TrimPrefix(line, "data: ")
-					var chunk struct {
-						Type  string `json:"type"`
-						Delta struct {
-							Text string `json:"text"`
-						} `json:"delta"`
-					}
-					if err := json.Unmarshal([]byte(jsonStr), &chunk); err == nil {
-						if chunk.Delta.Text != "" {
-							ch <- StreamChunk{Text: chunk.Delta.Text}
-						}
+		line, err := reader.ReadString('\n')
+		if len(line) > 0 {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "data: ") {
+				jsonStr := strings.TrimPrefix(line, "data: ")
+				var chunk struct {
+					Type  string `json:"type"`
+					Delta struct {
+						Text string `json:"text"`
+					} `json:"delta"`
+				}
+				if jsonErr := json.Unmarshal([]byte(jsonStr), &chunk); jsonErr == nil {
+					if chunk.Delta.Text != "" {
+						ch <- StreamChunk{Text: chunk.Delta.Text}
 					}
 				}
 			}
@@ -262,7 +272,9 @@ func (c *Client) streamClaude(ctx context.Context, prompt string, ch chan<- Stre
 func (c *Client) streamOpenAI(ctx context.Context, prompt string, ch chan<- StreamChunk) {
 	endpoint := "https://api.openai.com/v1/chat/completions"
 	if c.Provider == ProviderOllama {
-		endpoint = "http://localhost:11434/v1/chat/completions"
+		endpoint = c.BaseURL + "/v1/chat/completions"
+	} else if c.Provider == ProviderCustom {
+		endpoint = strings.TrimSuffix(c.BaseURL, "/") + "/chat/completions"
 	}
 
 	payload := map[string]interface{}{
@@ -291,31 +303,34 @@ func (c *Client) streamOpenAI(ctx context.Context, prompt string, ch chan<- Stre
 	}
 	defer resp.Body.Close()
 
-	buf := make([]byte, 2048)
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		ch <- StreamChunk{Error: fmt.Errorf("api error (%d): %s", resp.StatusCode, string(respBody)), Done: true}
+		return
+	}
+
+	reader := bufio.NewReader(resp.Body)
 	for {
-		n, err := resp.Body.Read(buf)
-		if n > 0 {
-			raw := string(buf[:n])
-			lines := strings.Split(raw, "\n")
-			for _, line := range lines {
-				if strings.HasPrefix(line, "data: ") {
-					jsonStr := strings.TrimPrefix(line, "data: ")
-					if strings.TrimSpace(jsonStr) == "[DONE]" {
-						ch <- StreamChunk{Done: true}
-						return
-					}
-					var chunk struct {
-						Choices []struct {
-							Delta struct {
-								Content string `json:"content"`
-							} `json:"delta"`
-						} `json:"choices"`
-					}
-					if err := json.Unmarshal([]byte(jsonStr), &chunk); err == nil {
-						for _, choice := range chunk.Choices {
-							if choice.Delta.Content != "" {
-								ch <- StreamChunk{Text: choice.Delta.Content}
-							}
+		line, err := reader.ReadString('\n')
+		if len(line) > 0 {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "data: ") {
+				jsonStr := strings.TrimPrefix(line, "data: ")
+				if strings.TrimSpace(jsonStr) == "[DONE]" {
+					ch <- StreamChunk{Done: true}
+					return
+				}
+				var chunk struct {
+					Choices []struct {
+						Delta struct {
+							Content string `json:"content"`
+						} `json:"delta"`
+					} `json:"choices"`
+				}
+				if jsonErr := json.Unmarshal([]byte(jsonStr), &chunk); jsonErr == nil {
+					for _, choice := range chunk.Choices {
+						if choice.Delta.Content != "" {
+							ch <- StreamChunk{Text: choice.Delta.Content}
 						}
 					}
 				}

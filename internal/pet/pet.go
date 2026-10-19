@@ -18,6 +18,7 @@ const (
 
 type Pet struct {
 	Name       string
+	Skin       SkinType
 	State      State
 	Frame      int
 	Mood       string
@@ -50,6 +51,7 @@ func NewPet(name string) *Pet {
 	}
 	return &Pet{
 		Name:      name,
+		Skin:      SkinDog,
 		State:     StateIdle,
 		Mood:      "curious",
 		Level:     1,

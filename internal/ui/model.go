@@ -7,7 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/404kernel/kernel/internal/agent"
 	"github.com/404kernel/kernel/internal/ai"
+	"github.com/404kernel/kernel/internal/audio"
 	"github.com/404kernel/kernel/internal/config"
 	"github.com/404kernel/kernel/internal/exec"
 	"github.com/404kernel/kernel/internal/history"
@@ -247,11 +249,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				})
 				m.CurrentResp = ""
 
-				// Award pet XP on successful response
+				// Play audio bark & award pet XP on successful response
+				audio.Bark()
 				if leveledUp := m.pet.AddXP(15); leveledUp {
+					audio.LevelUpChime()
 					m.Messages = append(m.Messages, chatMessage{
 						Role:    "SYSTEM",
-						Content: fmt.Sprintf("🎉 Level Up! %s reached Level %d: [%s]! *happy woof!*", m.pet.Name, m.pet.Level, m.pet.Title()),
+						Content: fmt.Sprintf("🎉 Level Up! %s reached Level %d: [%s]! *happy bark!*", m.pet.Name, m.pet.Level, m.pet.Title()),
 						Time:    time.Now().Format("15:04"),
 					})
 				}
@@ -516,11 +520,17 @@ func (m *Model) handleSlashCommand(input string) (tea.Model, tea.Cmd, bool) {
 		helpText := "### ⚡ Kernel Commands & Tools\n\n" +
 			"- `/help` — Display this command reference\n" +
 			"- `/clear` — Clear current chat screen\n" +
-			"- `/pet` — Pet Sparky (+20 XP, Affection 100%)\n" +
-			"- `/model <name>` — Switch active model dynamically\n" +
-			"- `/save [filename]` — Export conversation to Markdown file\n" +
+			"- `/pet` — Pet companion (+20 XP, Affection 100%)\n" +
+			"- `/skin [cat|dragon|drone|dog]` — Change companion avatar\n" +
+			"- `/tree [dir]` — Visual directory tree explorer\n" +
+			"- `/diff <file>` — Compare workspace file modifications\n" +
+			"- `/auto <goal>` — Autonomous coding agent loop\n" +
 			"- `/read <file>` — Read and inspect file contents\n" +
 			"- `/web <query>` — Live zero-key web search\n" +
+			"- `/voice [on|off]` — Toggle audio synthesis & chimes\n" +
+			"- `/speak <text>` — Read text aloud with system TTS\n" +
+			"- `/model <name>` — Switch active model dynamically\n" +
+			"- `/save [filename]` — Export conversation to Markdown file\n" +
 			"- `/exec <cmd>` or `$ <cmd>` — Run shell commands inside Kernel\n" +
 			"- `/quit` or `:q` — Save session history and exit\n"
 		m.textInput.Reset()
@@ -692,6 +702,178 @@ func (m *Model) handleSlashCommand(input string) (tea.Model, tea.Cmd, bool) {
 		return m, nil, true
 	}
 
+	// Companion Skin Switcher (/skin [dog|cat|dragon|drone])
+	if cmd == "/skin" {
+		m.textInput.Reset()
+		if arg == "" {
+			m.Messages = append(m.Messages, chatMessage{
+				Role:    "SYSTEM",
+				Content: "Available skins:\n" + pet.AvailableSkins() + "\n\nUsage: `/skin <skin-name>`",
+				Time:    time.Now().Format("15:04"),
+			})
+		} else {
+			feedback := m.pet.SetSkin(pet.SkinType(strings.ToLower(arg)))
+			audio.Bark()
+			m.Messages = append(m.Messages, chatMessage{
+				Role:    "SYSTEM",
+				Content: feedback,
+				Time:    time.Now().Format("15:04"),
+			})
+		}
+		m.updateViewport()
+		return m, nil, true
+	}
+
+	// Toggle Voice & Audio Synthesis (/voice [on|off])
+	if cmd == "/voice" {
+		m.textInput.Reset()
+		if strings.ToLower(arg) == "off" || strings.ToLower(arg) == "false" {
+			audio.VoiceEnabled = false
+			m.Messages = append(m.Messages, chatMessage{
+				Role:    "SYSTEM",
+				Content: "Audio chimes and speech synthesis muted.",
+				Time:    time.Now().Format("15:04"),
+			})
+		} else {
+			audio.VoiceEnabled = true
+			audio.Bark()
+			m.Messages = append(m.Messages, chatMessage{
+				Role:    "SYSTEM",
+				Content: "Audio chimes and speech synthesis enabled!",
+				Time:    time.Now().Format("15:04"),
+			})
+		}
+		m.updateViewport()
+		return m, nil, true
+	}
+
+	// Text-to-Speech Speak (/speak <text>)
+	if cmd == "/speak" {
+		m.textInput.Reset()
+		if arg == "" {
+			m.Messages = append(m.Messages, chatMessage{
+				Role:    "SYSTEM",
+				Content: "Usage: `/speak <phrase-to-speak>`",
+				Time:    time.Now().Format("15:04"),
+			})
+		} else {
+			audio.Speak(arg)
+			m.Messages = append(m.Messages, chatMessage{
+				Role:    "SYSTEM",
+				Content: fmt.Sprintf("🗣️ Speaking: \"%s\"", arg),
+				Time:    time.Now().Format("15:04"),
+			})
+		}
+		m.updateViewport()
+		return m, nil, true
+	}
+
+	// Interactive Directory Tree (/tree [dir])
+	if cmd == "/tree" {
+		m.textInput.Reset()
+		dir := arg
+		if dir == "" {
+			dir = "."
+		}
+		treeOut, err := tools.RenderDirectoryTree(dir, 3)
+		if err != nil {
+			m.Messages = append(m.Messages, chatMessage{
+				Role:    "ERROR",
+				Content: fmt.Sprintf("Tree error: %v", err),
+				Time:    time.Now().Format("15:04"),
+			})
+		} else {
+			m.Messages = append(m.Messages, chatMessage{
+				Role:    "KERNEL",
+				Content: treeOut,
+				Time:    time.Now().Format("15:04"),
+			})
+			m.pet.AddXP(10)
+		}
+		m.updateViewport()
+		return m, nil, true
+	}
+
+	// File Diff Tool (/diff <file>)
+	if cmd == "/diff" {
+		m.textInput.Reset()
+		if arg == "" {
+			m.Messages = append(m.Messages, chatMessage{
+				Role:    "SYSTEM",
+				Content: "Usage: `/diff <file-path>`",
+				Time:    time.Now().Format("15:04"),
+			})
+		} else {
+			res := exec.RunShellCommand(context.Background(), fmt.Sprintf("git diff %s", arg), 10*time.Second)
+			diffText := res.Stdout
+			if diffText == "" {
+				diffText = fmt.Sprintf("No unstaged git changes found for `%s`.", arg)
+			}
+			m.Messages = append(m.Messages, chatMessage{
+				Role:    "KERNEL",
+				Content: fmt.Sprintf("```diff\n%s\n```", diffText),
+				Time:    time.Now().Format("15:04"),
+			})
+		}
+		m.updateViewport()
+		return m, nil, true
+	}
+
+	// Autonomous Agent Mode (/auto <goal>)
+	if cmd == "/auto" {
+		m.textInput.Reset()
+		if arg == "" {
+			m.Messages = append(m.Messages, chatMessage{
+				Role:    "SYSTEM",
+				Content: "Usage: `/auto <goal>` (e.g. `/auto create a responsive html5 clock`)",
+				Time:    time.Now().Format("15:04"),
+			})
+			m.updateViewport()
+			return m, nil, true
+		}
+
+		m.Messages = append(m.Messages, chatMessage{
+			Role:    "YOU",
+			Content: "/auto " + arg,
+			Time:    time.Now().Format("15:04"),
+		})
+		m.pet.SetState(pet.StateThinking)
+		m.updateViewport()
+
+		progressChan := make(chan agent.AgentProgress, 20)
+		go agent.RunAutonomousTask(context.Background(), m.aiClient, arg, progressChan)
+
+		// Synchronously collect progress steps for display
+		for p := range progressChan {
+			if p.Type == agent.StepWriting || p.Type == agent.StepRunning {
+				m.Messages = append(m.Messages, chatMessage{
+					Role:    "SYSTEM",
+					Content: p.Message,
+					Time:    time.Now().Format("15:04"),
+				})
+			} else if p.Type == agent.StepDone {
+				m.Messages = append(m.Messages, chatMessage{
+					Role:    "KERNEL",
+					Content: p.Message,
+					Time:    time.Now().Format("15:04"),
+				})
+				audio.LevelUpChime()
+				m.pet.AddXP(25)
+				m.pet.SetState(pet.StateHappy)
+			} else if p.Type == agent.StepError {
+				m.Messages = append(m.Messages, chatMessage{
+					Role:    "ERROR",
+					Content: p.Message,
+					Time:    time.Now().Format("15:04"),
+				})
+				m.pet.SetState(pet.StateIdle)
+			}
+		}
+
+		m.updateViewport()
+		return m, nil, true
+	}
+
 	// Shell command execution ($ or /exec)
 	if cmd == "/exec" || strings.HasPrefix(input, "$") {
 		m.textInput.Reset()
@@ -751,7 +933,7 @@ func (m Model) View() string {
 		Render(
 			lipgloss.JoinHorizontal(
 				lipgloss.Center,
-				m.pet.Render(),
+				m.pet.RenderCustomSkin(),
 				"   ",
 				petStats,
 			),

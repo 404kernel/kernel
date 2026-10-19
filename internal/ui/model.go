@@ -9,6 +9,8 @@ import (
 
 	"github.com/404kernel/kernel/internal/ai"
 	"github.com/404kernel/kernel/internal/config"
+	"github.com/404kernel/kernel/internal/exec"
+	"github.com/404kernel/kernel/internal/history"
 	"github.com/404kernel/kernel/internal/pet"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -178,9 +180,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if input == "" {
 				return m, nil
 			}
-			// Only quit if user explicitly enters :q or /quit, NOT when asking a question containing 'q'
-			if input == ":q" || input == "/quit" || input == "exit" {
-				return m, tea.Quit
+			// Handle Slash Commands and direct shell executions
+			if strings.HasPrefix(input, "/") || strings.HasPrefix(input, "$") || strings.HasPrefix(input, ":") {
+				if updatedModel, cmd, handled := m.handleSlashCommand(input); handled {
+					return updatedModel, cmd
+				}
 			}
 
 			m.textInput.Reset()
@@ -195,10 +199,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			})
 			m.updateViewport()
 
+			// Build multi-turn context from current session (last 12 messages)
+			var historyMsgs []ai.Message
+			startIdx := 0
+			if len(m.Messages) > 12 {
+				startIdx = len(m.Messages) - 12
+			}
+			for _, msg := range m.Messages[startIdx:] {
+				if msg.Role == "SYSTEM" || msg.Role == "ERROR" {
+					continue
+				}
+				historyMsgs = append(historyMsgs, ai.Message{
+					Role:    msg.Role,
+					Content: msg.Content,
+				})
+			}
+
 			ctx, cancel := context.WithCancel(context.Background())
 			m.cancelFunc = cancel
 			m.streamChan = make(chan ai.StreamChunk, 50)
-			go m.aiClient.Stream(ctx, input, m.streamChan)
+			go m.aiClient.StreamChat(ctx, historyMsgs, m.streamChan)
 
 			return m, waitForStream(m.streamChan)
 		}
@@ -225,6 +245,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					Time:    time.Now().Format("15:04"),
 				})
 				m.CurrentResp = ""
+
+				// Award pet XP on successful response
+				if leveledUp := m.pet.AddXP(15); leveledUp {
+					m.Messages = append(m.Messages, chatMessage{
+						Role:    "SYSTEM",
+						Content: fmt.Sprintf("🎉 Level Up! %s reached Level %d: [%s]! *happy woof!*", m.pet.Name, m.pet.Level, m.pet.Title()),
+						Time:    time.Now().Format("15:04"),
+					})
+				}
 			}
 			m.updateViewport()
 			return m, nil
@@ -401,6 +430,11 @@ func (m *Model) handleWizardCustomModel() (tea.Model, tea.Cmd) {
 func (m *Model) updateViewport() {
 	var b strings.Builder
 
+	contentWidth := m.width - 12
+	if contentWidth < 30 {
+		contentWidth = 30
+	}
+
 	for _, msg := range m.Messages {
 		var roleTag string
 		switch msg.Role {
@@ -415,7 +449,12 @@ func (m *Model) updateViewport() {
 		}
 
 		header := fmt.Sprintf("%s %s", roleTag, LogTimestamp.Render(msg.Time))
-		bubble := MessageBubble.Render(fmt.Sprintf("%s\n\n%s", header, msg.Content))
+		body := msg.Content
+		if msg.Role == "KERNEL" {
+			body = RenderMarkdown(msg.Content, contentWidth)
+		}
+
+		bubble := MessageBubble.Render(fmt.Sprintf("%s\n\n%s", header, body))
 		b.WriteString(bubble + "\n\n")
 	}
 
@@ -449,6 +488,161 @@ func waitForStream(ch chan ai.StreamChunk) tea.Cmd {
 	}
 }
 
+func (m *Model) handleSlashCommand(input string) (tea.Model, tea.Cmd, bool) {
+	parts := strings.Fields(input)
+	if len(parts) == 0 {
+		return m, nil, false
+	}
+	cmd := parts[0]
+	arg := strings.TrimSpace(strings.TrimPrefix(input, cmd))
+
+	// Clean quit and session archive
+	if cmd == ":q" || cmd == "/quit" || cmd == "/exit" || cmd == "exit" {
+		var hist []history.HistoryItem
+		for _, msg := range m.Messages {
+			hist = append(hist, history.HistoryItem{
+				Timestamp: msg.Time,
+				Role:      msg.Role,
+				Content:   msg.Content,
+			})
+		}
+		_ = history.AppendSession(hist)
+		return m, tea.Quit, true
+	}
+
+	// Help reference
+	if cmd == "/help" || cmd == "/?" {
+		helpText := "### ⚡ Kernel Commands & Tools\n\n" +
+			"- `/help` — Display this command reference\n" +
+			"- `/clear` — Clear current chat screen\n" +
+			"- `/pet` — Pet Sparky (+20 XP, Affection 100%)\n" +
+			"- `/model <name>` — Switch active model dynamically\n" +
+			"- `/save [filename]` — Export conversation to Markdown file\n" +
+			"- `/exec <cmd>` or `$ <cmd>` — Run shell commands inside Kernel\n" +
+			"- `/quit` or `:q` — Save session history and exit\n"
+		m.textInput.Reset()
+		m.Messages = append(m.Messages, chatMessage{
+			Role:    "SYSTEM",
+			Content: helpText,
+			Time:    time.Now().Format("15:04"),
+		})
+		m.updateViewport()
+		return m, nil, true
+	}
+
+	// Clear viewport
+	if cmd == "/clear" {
+		m.textInput.Reset()
+		m.Messages = []chatMessage{
+			{
+				Role:    "SYSTEM",
+				Content: "Chat cleared. Sparky is ready for new instructions.",
+				Time:    time.Now().Format("15:04"),
+			},
+		}
+		m.updateViewport()
+		return m, nil, true
+	}
+
+	// Pet Sparky
+	if cmd == "/pet" {
+		m.textInput.Reset()
+		feedback := m.pet.Pet()
+		m.Messages = append(m.Messages, chatMessage{
+			Role:    "SYSTEM",
+			Content: fmt.Sprintf("%s\nLevel %d: [%s] | Affection: %d%%", feedback, m.pet.Level, m.pet.Title(), m.pet.Affection),
+			Time:    time.Now().Format("15:04"),
+		})
+		m.updateViewport()
+		return m, nil, true
+	}
+
+	// Dynamic Model Switching
+	if cmd == "/model" {
+		m.textInput.Reset()
+		if arg == "" {
+			m.Messages = append(m.Messages, chatMessage{
+				Role:    "SYSTEM",
+				Content: fmt.Sprintf("Current Model: [%s]. To switch, type `/model <model-name>`.", m.aiClient.Model),
+				Time:    time.Now().Format("15:04"),
+			})
+		} else {
+			m.cfg.Model = arg
+			_ = config.SaveConfig(m.cfg)
+			m.aiClient = ai.NewClientFromConfig(m.cfg)
+			m.Messages = append(m.Messages, chatMessage{
+				Role:    "SYSTEM",
+				Content: fmt.Sprintf("Switched active model to [%s]. Configuration updated.", m.cfg.Model),
+				Time:    time.Now().Format("15:04"),
+			})
+		}
+		m.updateViewport()
+		return m, nil, true
+	}
+
+	// Export session
+	if cmd == "/save" {
+		m.textInput.Reset()
+		var hist []history.HistoryItem
+		for _, msg := range m.Messages {
+			hist = append(hist, history.HistoryItem{
+				Timestamp: msg.Time,
+				Role:      msg.Role,
+				Content:   msg.Content,
+			})
+		}
+		savedFile, err := history.ExportMarkdown(arg, hist)
+		if err != nil {
+			m.Messages = append(m.Messages, chatMessage{
+				Role:    "ERROR",
+				Content: fmt.Sprintf("Failed to export chat: %v", err),
+				Time:    time.Now().Format("15:04"),
+			})
+		} else {
+			m.Messages = append(m.Messages, chatMessage{
+				Role:    "SYSTEM",
+				Content: fmt.Sprintf("Session successfully saved to: `%s`", savedFile),
+				Time:    time.Now().Format("15:04"),
+			})
+		}
+		m.updateViewport()
+		return m, nil, true
+	}
+
+	// Shell command execution ($ or /exec)
+	if cmd == "/exec" || strings.HasPrefix(input, "$") {
+		m.textInput.Reset()
+		cmdToRun := arg
+		if strings.HasPrefix(input, "$") {
+			cmdToRun = strings.TrimSpace(strings.TrimPrefix(input, "$"))
+		}
+		if cmdToRun == "" {
+			return m, nil, true
+		}
+
+		m.Messages = append(m.Messages, chatMessage{
+			Role:    "YOU",
+			Content: "$ " + cmdToRun,
+			Time:    time.Now().Format("15:04"),
+		})
+
+		res := exec.RunShellCommand(context.Background(), cmdToRun, 30*time.Second)
+		formatted := exec.FormatResult(res)
+
+		m.Messages = append(m.Messages, chatMessage{
+			Role:    "SYSTEM",
+			Content: fmt.Sprintf("```terminal\n%s\n```", formatted),
+			Time:    time.Now().Format("15:04"),
+		})
+		m.pet.AddXP(10)
+		m.pet.SetState(pet.StateHappy)
+		m.updateViewport()
+		return m, nil, true
+	}
+
+	return m, nil, false
+}
+
 func (m Model) View() string {
 	var s strings.Builder
 
@@ -459,7 +653,14 @@ func (m Model) View() string {
 	headerBar := lipgloss.JoinHorizontal(lipgloss.Center, title, "  ", providerBadge, "  ", cwdBadge)
 	s.WriteString(HeaderBox.Render(headerBar) + "\n\n")
 
-	// Pet Companion Card
+	// Pet Companion Card with Level, Mood, and Affection Stats
+	petStats := fmt.Sprintf("%s  %s\n%s\n%s",
+		TitleStyle.Render("COMPANION: "+m.pet.Name),
+		pet.PetMoodStyle.Render(fmt.Sprintf("[Lv. %d %s]", m.pet.Level, m.pet.Title())),
+		SubtitleStyle.Render("Status: "+m.pet.Mood),
+		SubtitleStyle.Render(fmt.Sprintf("Affection: %d%%  |  XP: %d/60", m.pet.Affection, m.pet.XP%60)),
+	)
+
 	petBox := lipgloss.NewStyle().
 		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(PrimaryColor).
@@ -469,7 +670,7 @@ func (m Model) View() string {
 				lipgloss.Center,
 				m.pet.Render(),
 				"   ",
-				fmt.Sprintf("%s\n%s", TitleStyle.Render("COMPANION: "+m.pet.Name), SubtitleStyle.Render("Status: "+m.pet.Mood)),
+				petStats,
 			),
 		)
 	s.WriteString(petBox + "\n\n")

@@ -22,12 +22,17 @@ type Pet struct {
 	Frame      int
 	Mood       string
 	BlinkTimer int
+	Level      int
+	XP         int
+	Affection  int
+	IdleTicks  int
 }
 
 var (
 	PetColor    = lipgloss.Color("#FFB86C") // Amber / Golden dog
 	AccentColor = lipgloss.Color("#00D7FE") // Cyan collar/eyes
 	MutedColor  = lipgloss.Color("#6272A4")
+	HeartColor  = lipgloss.Color("#FF79C6") // Pink hearts
 
 	PetBoxStyle = lipgloss.NewStyle().
 			BorderStyle(lipgloss.RoundedBorder()).
@@ -44,23 +49,68 @@ func NewPet(name string) *Pet {
 		name = "Sparky"
 	}
 	return &Pet{
-		Name:  name,
-		State: StateIdle,
-		Mood:  "curious",
+		Name:      name,
+		State:     StateIdle,
+		Mood:      "curious",
+		Level:     1,
+		XP:        0,
+		Affection: 100,
 	}
+}
+
+func (p *Pet) Title() string {
+	switch {
+	case p.Level >= 5:
+		return "Kernel Archon"
+	case p.Level >= 4:
+		return "Cyber Sentinel"
+	case p.Level >= 3:
+		return "Senior Dev Doggo"
+	case p.Level >= 2:
+		return "Terminal Scout"
+	default:
+		return "Code Puppy"
+	}
+}
+
+func (p *Pet) AddXP(amount int) (leveledUp bool) {
+	p.XP += amount
+	p.IdleTicks = 0
+	oldLevel := p.Level
+	p.Level = 1 + (p.XP / 60)
+	if p.Affection < 100 {
+		p.Affection += 5
+		if p.Affection > 100 {
+			p.Affection = 100
+		}
+	}
+	return p.Level > oldLevel
+}
+
+func (p *Pet) Pet() string {
+	p.AddXP(20)
+	p.SetState(StateHappy)
+	p.Mood = "♥ *happy tail wag* Woof! ♥"
+	return "Sparky loved that! (+20 XP, Affection 100%)"
 }
 
 func (p *Pet) Tick() {
 	p.Frame++
+	p.IdleTicks++
+	// Fall asleep if idle for ~45 seconds (approx 320 ticks at 140ms)
+	if p.IdleTicks > 300 && p.State == StateIdle {
+		p.SetState(StateSleeping)
+	}
 }
 
 func (p *Pet) SetState(s State) {
 	p.State = s
+	p.IdleTicks = 0
 	switch s {
 	case StateThinking:
 		p.Mood = "focusing..."
 	case StateHappy:
-		p.Mood = "*wags tail*"
+		p.Mood = "*wags tail happily*"
 	case StateSleeping:
 		p.Mood = "zzZ..."
 	default:

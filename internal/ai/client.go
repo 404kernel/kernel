@@ -87,6 +87,11 @@ func NewClientFromConfig(cfg *config.Config) *Client {
 	}
 }
 
+type Message struct {
+	Role    string
+	Content string
+}
+
 type StreamChunk struct {
 	Text  string
 	Done  bool
@@ -94,26 +99,30 @@ type StreamChunk struct {
 }
 
 func (c *Client) Stream(ctx context.Context, prompt string, ch chan<- StreamChunk) {
+	c.StreamChat(ctx, []Message{{Role: "user", Content: prompt}}, ch)
+}
+
+func (c *Client) StreamChat(ctx context.Context, history []Message, ch chan<- StreamChunk) {
 	defer close(ch)
 
 	if c.Provider == ProviderDemo {
-		c.streamDemo(ctx, prompt, ch)
+		c.streamDemo(ctx, history, ch)
 		return
 	}
 
 	switch c.Provider {
 	case ProviderGemini:
-		c.streamGemini(ctx, prompt, ch)
+		c.streamGemini(ctx, history, ch)
 	case ProviderClaude:
-		c.streamClaude(ctx, prompt, ch)
+		c.streamClaude(ctx, history, ch)
 	case ProviderOpenAI, ProviderOllama, ProviderCustom:
-		c.streamOpenAI(ctx, prompt, ch)
+		c.streamOpenAI(ctx, history, ch)
 	default:
-		c.streamDemo(ctx, prompt, ch)
+		c.streamDemo(ctx, history, ch)
 	}
 }
 
-func (c *Client) streamDemo(ctx context.Context, prompt string, ch chan<- StreamChunk) {
+func (c *Client) streamDemo(ctx context.Context, history []Message, ch chan<- StreamChunk) {
 	demoResponse := []string{
 		"[KERNEL // DEMO MODE]: No active API key found.\n",
 		"Run with your API key or configure it in the Setup Wizard:\n\n",
@@ -135,17 +144,35 @@ func (c *Client) streamDemo(ctx context.Context, prompt string, ch chan<- Stream
 	ch <- StreamChunk{Done: true}
 }
 
-func (c *Client) streamGemini(ctx context.Context, prompt string, ch chan<- StreamChunk) {
+func (c *Client) streamGemini(ctx context.Context, history []Message, ch chan<- StreamChunk) {
 	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", c.Model, c.APIKey)
 
+	var contents []map[string]interface{}
+	for _, m := range history {
+		role := "user"
+		if m.Role == "KERNEL" || m.Role == "assistant" || m.Role == "model" {
+			role = "model"
+		}
+		contents = append(contents, map[string]interface{}{
+			"role": role,
+			"parts": []map[string]string{
+				{"text": m.Content},
+			},
+		})
+	}
+
+	if len(contents) == 0 {
+		ch <- StreamChunk{Done: true}
+		return
+	}
+
 	payload := map[string]interface{}{
-		"contents": []map[string]interface{}{
-			{
-				"parts": []map[string]string{
-					{"text": prompt},
-				},
+		"system_instruction": map[string]interface{}{
+			"parts": []map[string]string{
+				{"text": "You are Kernel, a high-performance terminal AI developer assistant paired with an ASCII canine companion named Sparky. Provide concise, expert code solutions with syntax tags. Format commands and paths cleanly."},
 			},
 		},
+		"contents": contents,
 	}
 
 	body, _ := json.Marshal(payload)
@@ -221,16 +248,27 @@ func (c *Client) streamGemini(ctx context.Context, prompt string, ch chan<- Stre
 	ch <- StreamChunk{Done: true}
 }
 
-func (c *Client) streamClaude(ctx context.Context, prompt string, ch chan<- StreamChunk) {
+func (c *Client) streamClaude(ctx context.Context, history []Message, ch chan<- StreamChunk) {
 	url := "https://api.anthropic.com/v1/messages"
+
+	var messages []map[string]string
+	for _, m := range history {
+		role := "user"
+		if m.Role == "KERNEL" || m.Role == "assistant" || m.Role == "model" {
+			role = "assistant"
+		}
+		messages = append(messages, map[string]string{
+			"role":    role,
+			"content": m.Content,
+		})
+	}
 
 	payload := map[string]interface{}{
 		"model":      c.Model,
 		"max_tokens": 4096,
-		"messages": []map[string]string{
-			{"role": "user", "content": prompt},
-		},
-		"stream": true,
+		"system":     "You are Kernel, a high-performance terminal AI developer assistant paired with an ASCII canine companion named Sparky. Provide concise, expert code solutions with syntax tags.",
+		"messages":   messages,
+		"stream":     true,
 	}
 
 	body, _ := json.Marshal(payload)
@@ -283,7 +321,7 @@ func (c *Client) streamClaude(ctx context.Context, prompt string, ch chan<- Stre
 	ch <- StreamChunk{Done: true}
 }
 
-func (c *Client) streamOpenAI(ctx context.Context, prompt string, ch chan<- StreamChunk) {
+func (c *Client) streamOpenAI(ctx context.Context, history []Message, ch chan<- StreamChunk) {
 	endpoint := "https://api.openai.com/v1/chat/completions"
 	if c.Provider == ProviderOllama {
 		endpoint = c.BaseURL + "/v1/chat/completions"
@@ -291,12 +329,27 @@ func (c *Client) streamOpenAI(ctx context.Context, prompt string, ch chan<- Stre
 		endpoint = strings.TrimSuffix(c.BaseURL, "/") + "/chat/completions"
 	}
 
-	payload := map[string]interface{}{
-		"model": c.Model,
-		"messages": []map[string]string{
-			{"role": "user", "content": prompt},
+	messages := []map[string]string{
+		{
+			"role":    "system",
+			"content": "You are Kernel, a high-performance terminal AI developer assistant paired with an ASCII canine companion named Sparky. Provide concise, expert code solutions with syntax tags.",
 		},
-		"stream": true,
+	}
+	for _, m := range history {
+		role := "user"
+		if m.Role == "KERNEL" || m.Role == "assistant" || m.Role == "model" {
+			role = "assistant"
+		}
+		messages = append(messages, map[string]string{
+			"role":    role,
+			"content": m.Content,
+		})
+	}
+
+	payload := map[string]interface{}{
+		"model":    c.Model,
+		"messages": messages,
+		"stream":   true,
 	}
 
 	body, _ := json.Marshal(payload)

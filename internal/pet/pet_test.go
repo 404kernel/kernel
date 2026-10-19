@@ -25,8 +25,8 @@ func TestPetCreationAndTransitions(t *testing.T) {
 	}
 
 	p.SetState(StateHappy)
-	if p.Mood != "*wags tail*" {
-		t.Errorf("expected mood *wags tail*, got %s", p.Mood)
+	if p.Mood != "*wags tail happily*" {
+		t.Errorf("expected mood *wags tail happily*, got %s", p.Mood)
 	}
 }
 
@@ -38,3 +38,21 @@ func TestPetAnimationTick(t *testing.T) {
 		t.Errorf("expected frame increment on tick")
 	}
 }
+
+func TestPetXPAndLeveling(t *testing.T) {
+	p := NewPet("Sparky")
+	if p.Level != 1 {
+		t.Fatalf("expected initial level 1, got %d", p.Level)
+	}
+
+	leveled := p.AddXP(70)
+	if !leveled || p.Level != 2 {
+		t.Errorf("expected level 2 after 70 XP, got %d", p.Level)
+	}
+
+	feedback := p.Pet()
+	if !strings.Contains(feedback, "+20 XP") {
+		t.Errorf("expected XP grant in pet feedback, got %s", feedback)
+	}
+}
+

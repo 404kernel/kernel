@@ -2,6 +2,7 @@ package audio
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"os/exec"
 	"runtime"
@@ -9,11 +10,17 @@ import (
 	"time"
 )
 
+//go:embed assets/dog_bark.wav
+var dogBarkWAV []byte
+
+//go:embed assets/cat_meow.wav
+var catMeowWAV []byte
+
 var (
 	VoiceEnabled = true
 )
 
-// PlayCompanionSound plays an animal-specific vocalization or sci-fi sound effect
+// PlayCompanionSound plays an authentic animal vocalization or sci-fi sound effect
 func PlayCompanionSound(skin string) {
 	if !VoiceEnabled {
 		return
@@ -21,51 +28,37 @@ func PlayCompanionSound(skin string) {
 
 	skin = strings.ToLower(skin)
 
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
-		defer cancel()
-
-		if runtime.GOOS == "windows" {
-			var script string
-			switch skin {
-			case "cat":
-				// Cat cute meow vocalization
-				script = `(New-Object -ComObject SAPI.SpVoice).Speak('Meow!')`
-			case "dragon":
-				// Dragon roar
-				script = `[console]::beep(200, 150); (New-Object -ComObject SAPI.SpVoice).Speak('Rawr!')`
-			case "drone":
-				// Futuristic digital sonar chirp sequence
-				script = `[console]::beep(1800, 40); [console]::beep(2400, 60); [console]::beep(3200, 80)`
-			default: // "dog"
-				// Dog enthusiastic Woof vocalization
-				script = `(New-Object -ComObject SAPI.SpVoice).Speak('Woof! Woof!')`
+	switch skin {
+	case "dog":
+		playWAV(dogBarkWAV)
+	case "cat":
+		playWAV(catMeowWAV)
+	case "drone":
+		go func() {
+			if runtime.GOOS == "windows" {
+				script := `[console]::beep(1800, 40); [console]::beep(2400, 60); [console]::beep(3200, 80)`
+				cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", script)
+				_ = cmd.Run()
+			} else {
+				fmt.Print("\a")
 			}
-			cmd := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", script)
-			_ = cmd.Run()
-		} else if runtime.GOOS == "darwin" {
-			switch skin {
-			case "cat":
-				cmd := exec.CommandContext(ctx, "say", "-v", "Victoria", "Meow")
+		}()
+	case "dragon":
+		go func() {
+			if runtime.GOOS == "windows" {
+				script := `[console]::beep(220, 100); [console]::beep(180, 150); [console]::beep(140, 200)`
+				cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", script)
 				_ = cmd.Run()
-			case "dragon":
-				cmd := exec.CommandContext(ctx, "say", "-v", "Zarvox", "Rawr")
-				_ = cmd.Run()
-			case "drone":
-				cmd := exec.CommandContext(ctx, "afplay", "/System/Library/Sounds/Submarine.aiff")
-				_ = cmd.Run()
-			default:
-				cmd := exec.CommandContext(ctx, "say", "-v", "Fred", "Woof woof")
-				_ = cmd.Run()
+			} else {
+				fmt.Print("\a")
 			}
-		} else {
-			// Linux bell fallback
-			fmt.Print("\a")
-		}
-	}()
+		}()
+	default:
+		playWAV(dogBarkWAV)
+	}
 }
 
-// Bark is a backwards-compatible alias for the dog vocalization
+// Bark is a backwards-compatible alias for the dog bark
 func Bark() {
 	PlayCompanionSound("dog")
 }

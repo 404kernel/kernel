@@ -153,6 +153,8 @@ Kernel includes a suite of instant commands accessible directly from the input b
 | `/model <id>` | Dynamically switch models (e.g. `/model gemini-3.5-flash`, `/model gpt-4o`) |
 | `/web <query>` | Performs a zero-key live web search and returns markdown summaries |
 | `/read <path>` | Reads and displays syntax-highlighted code from any project file |
+| `/theme [name]` | Dynamically switch color themes (`cyberpunk`, `matrix`, `dracula`, `nord`, `tokyo`, `synthwave`) |
+| `/commit [-y]` | AI Git Conventional Commit message generator & 1-click committer |
 | `/save [filename]` | Exports the entire chat session to a formatted `.md` file |
 | `$ <cmd>` or `/exec <cmd>` | Executes a local shell command and embeds stdout/stderr in chat |
 | `:q`, `/quit`, `exit` | Saves conversation to history and cleanly exits |

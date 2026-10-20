@@ -95,6 +95,9 @@ func NewModel(cfg *config.Config) Model {
 	}
 
 	client := ai.NewClientFromConfig(cfg)
+	if cfg.Theme != "" {
+		_, _ = ApplyTheme(cfg.Theme)
+	}
 
 	m := Model{
 		cfg:       cfg,
@@ -531,6 +534,8 @@ func (m *Model) handleSlashCommand(input string) (tea.Model, tea.Cmd, bool) {
 			"- `/speak <text>` — Read text aloud with system TTS\n" +
 			"- `/stats` — Live system telemetry, RAM & CPU dashboard\n" +
 			"- `/model <name>` — Switch active model dynamically\n" +
+			"- `/theme [name]` — Switch color themes (`cyberpunk`, `matrix`, `dracula`, `nord`, `tokyo`, `synthwave`)\n" +
+			"- `/commit [-y]` — AI Git Conventional Commit generator & committer\n" +
 			"- `/save [filename]` — Export conversation to Markdown file\n" +
 			"- `/exec <cmd>` or `$ <cmd>` — Run shell commands inside Kernel\n" +
 			"- `/quit` or `:q` — Save session history and exit\n"
@@ -918,6 +923,126 @@ func (m *Model) handleSlashCommand(input string) (tea.Model, tea.Cmd, bool) {
 		})
 		m.pet.AddXP(10)
 		m.pet.SetState(pet.StateHappy)
+		m.updateViewport()
+		return m, nil, true
+	}
+
+	// Color Theme Switcher (/theme [name])
+	if cmd == "/theme" {
+		m.textInput.Reset()
+		if arg == "" {
+			m.Messages = append(m.Messages, chatMessage{
+				Role:    "SYSTEM",
+				Content: ListThemes(),
+				Time:    time.Now().Format("15:04"),
+			})
+		} else {
+			palette, err := ApplyTheme(arg)
+			if err != nil {
+				m.Messages = append(m.Messages, chatMessage{
+					Role:    "ERROR",
+					Content: fmt.Sprintf("Theme '%s' not recognized.\n\n%s", arg, ListThemes()),
+					Time:    time.Now().Format("15:04"),
+				})
+			} else {
+				m.cfg.Theme = palette.Name
+				_ = config.SaveConfig(m.cfg)
+				m.pet.AddXP(10)
+				m.pet.SetState(pet.StateHappy)
+				audio.PlayCompanionSound(string(m.pet.Skin))
+				m.Messages = append(m.Messages, chatMessage{
+					Role:    "SYSTEM",
+					Content: fmt.Sprintf("🎨 Theme set to **%s** (%s)!\nSaved to `~/.kernel/config.json`.", palette.DisplayName, palette.Description),
+					Time:    time.Now().Format("15:04"),
+				})
+			}
+		}
+		m.updateViewport()
+		return m, nil, true
+	}
+
+	// AI Git Commit Assistant (/commit [-y])
+	if cmd == "/commit" {
+		m.textInput.Reset()
+		changes := tools.InspectGitChanges()
+		if !changes.HasChanges {
+			m.Messages = append(m.Messages, chatMessage{
+				Role:    "SYSTEM",
+				Content: "No uncommitted git changes detected. Working tree is clean ✨",
+				Time:    time.Now().Format("15:04"),
+			})
+			m.updateViewport()
+			return m, nil, true
+		}
+
+		autoCommit := strings.Contains(arg, "-y") || strings.Contains(arg, "--yes")
+
+		m.Messages = append(m.Messages, chatMessage{
+			Role:    "YOU",
+			Content: input,
+			Time:    time.Now().Format("15:04"),
+		})
+
+		var commitMsg string
+		if m.aiClient != nil && m.aiClient.Provider != ai.ProviderDemo {
+			prompt := tools.BuildCommitPrompt(changes)
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			ch := make(chan ai.StreamChunk, 20)
+			go m.aiClient.Stream(ctx, prompt, ch)
+
+			var sb strings.Builder
+			for chunk := range ch {
+				if chunk.Error != nil {
+					break
+				}
+				sb.WriteString(chunk.Text)
+			}
+			commitMsg = strings.TrimSpace(sb.String())
+		}
+
+		if commitMsg == "" {
+			commitMsg = tools.HeuristicCommitMessage(changes)
+		}
+
+		commitMsg = strings.Trim(commitMsg, "`\"'\n\r ")
+
+		fileList := ""
+		for i, f := range changes.Files {
+			if i >= 6 {
+				fileList += fmt.Sprintf("- ... and %d more files\n", len(changes.Files)-6)
+				break
+			}
+			fileList += fmt.Sprintf("- `%s`\n", f)
+		}
+
+		if autoCommit {
+			res := tools.RunGitCommit(commitMsg)
+			if res.ExitCode == 0 {
+				m.pet.AddXP(25)
+				m.pet.SetState(pet.StateHappy)
+				audio.Bark()
+				m.Messages = append(m.Messages, chatMessage{
+					Role:    "KERNEL",
+					Content: fmt.Sprintf("### ⚡ Committed Successfully!\n\n**Commit Message:**\n```\n%s\n```\n\n**Committed Files (%d):**\n%s\n`git commit` exited cleanly (code 0).", commitMsg, len(changes.Files), fileList),
+					Time:    time.Now().Format("15:04"),
+				})
+			} else {
+				m.Messages = append(m.Messages, chatMessage{
+					Role:    "ERROR",
+					Content: fmt.Sprintf("Failed to run git commit: %s\n%s", res.Stderr, res.Stdout),
+					Time:    time.Now().Format("15:04"),
+				})
+			}
+		} else {
+			m.pet.AddXP(10)
+			m.Messages = append(m.Messages, chatMessage{
+				Role:    "KERNEL",
+				Content: fmt.Sprintf("### ⚡ AI Suggested Commit\n\n```\n%s\n```\n\n**Changed Files (%d):**\n%s\n\n*Tip:* Run `/commit -y` to stage all and commit immediately, or execute:\n```bash\ngit commit -m \"%s\"\n```", commitMsg, len(changes.Files), fileList, commitMsg),
+				Time:    time.Now().Format("15:04"),
+			})
+		}
+
 		m.updateViewport()
 		return m, nil, true
 	}

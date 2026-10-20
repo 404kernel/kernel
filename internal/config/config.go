@@ -16,6 +16,7 @@ type Config struct {
 	CustomEndpoint string `json:"custom_endpoint,omitempty"`
 	CustomKey      string `json:"custom_key,omitempty"`
 	CustomModel    string `json:"custom_model,omitempty"`
+	Theme          string `json:"theme,omitempty"`
 }
 
 func GetConfigDir() (string, error) {
@@ -80,6 +81,10 @@ func LoadConfig() (*Config, error) {
 	}
 	if envEndpoint := os.Getenv("CUSTOM_API_BASE"); envEndpoint != "" {
 		cfg.CustomEndpoint = envEndpoint
+	}
+
+	if cfg.Theme == "" {
+		cfg.Theme = "cyberpunk"
 	}
 
 	return &cfg, nil

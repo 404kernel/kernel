@@ -159,6 +159,9 @@ Kernel includes a suite of instant commands accessible directly from the input b
 | `$ <cmd>` or `/exec <cmd>` | Executes a local shell command and embeds stdout/stderr in chat |
 | `:q`, `/quit`, `exit` | Saves conversation to history and cleanly exits |
 
+> [!TIP]
+> **Pro Tip**: Use `/theme matrix` for high-contrast phosphor green, or `/commit -y` to stage and commit active work in a single keypress!
+
 ---
 
 ## 🐶 Pet Companion Gamification
